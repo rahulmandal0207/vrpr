@@ -1,0 +1,7 @@
+*
+!pyproject.toml
+!README.md
+!LICENSE
+!configs/
+!src/
+**/__pycache__/
