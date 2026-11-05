@@ -1,0 +1,39 @@
+# Default settings. A config file only needs the values it changes.
+detector:
+  weights: models/best.pt
+  confidence: 0.4      # discard weaker detections
+  image_size: 640
+  device: null         # null chooses automatically; or "cpu", "0"
+
+ocr:
+  languages: [en]
+  gpu: true            # falls back to CPU when no GPU is available
+  min_confidence: 0.2  # ignore OCR fragments below this
+  every_n_frames: 2    # OCR is the slowest stage
+  crop_padding: 0.05   # share of the box added on each side
+  min_crop_height: 64  # smaller crops are upscaled before OCR
+
+tracker:
+  max_age: 5           # frames a plate may go undetected before its track ends;
+                       # keep this low, or a track can coast onto the next vehicle
+  min_hits: 2          # detections required to confirm a track
+  iou_threshold: 0.2
+
+consensus:
+  min_agreement: 3     # identical readings needed to report early
+  min_votes_on_close: 1  # readings needed to report when a track ends
+  dedupe_window_seconds: 30  # same plate within this window is one sighting
+  recheck_every_n_frames: 16  # how often a settled track is read again
+
+output:
+  directory: output
+  save_crops: true
+  save_annotated_video: false
+
+source:
+  max_read_failures: 30  # reconnect attempts for cameras and streams
+  retry_delay_seconds: 1.0
+
+logging:
+  level: INFO
+  format: text         # "json" for log aggregation

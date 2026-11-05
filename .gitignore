@@ -1,10 +1,32 @@
-/Yolo_weights/
-/Videos/
-/Images/
-/DataSet/
-.idea/
-/Train/runs/
-/config/
-__pycache__/
-/Src/output/
+# Models, data and run results are too large or too sensitive for git
 *.pt
+/models/
+/data/
+/output/
+/runs/
+*.mp4
+*.avi
+
+# Secrets
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+/build/
+/dist/
+.venv/
+venv/
+
+# Tool caches
+.coverage
+coverage.xml
+htmlcov/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# Editors
+.idea/
+.vscode/
