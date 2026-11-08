@@ -18,6 +18,7 @@ differ from before: see the README.
 - Reconnection for cameras and streams, and clean shutdown on Ctrl+C or `SIGTERM`.
 - JSON Lines output, a run summary, an optional annotated video and JSON logs.
 - A `.env` file in the working folder is read on start, for settings such as `ROBOFLOW_API_KEY`.
+- A browser interface, `vrpr web`, with a live preview, plate gallery and past runs.
 - Tests, type checks, linting, CI, a Dockerfile and documentation.
 
 ### Fixed

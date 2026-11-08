@@ -6,6 +6,7 @@ VRPR's own source code is under the [MIT License](LICENSE). Its dependencies hav
 | --- | --- | --- |
 | [Ultralytics YOLO](https://github.com/ultralytics/ultralytics) | AGPL-3.0, or a commercial license from Ultralytics | Plate detection and training |
 | [EasyOCR](https://github.com/JaidedAI/EasyOCR) | Apache-2.0 | Text recognition |
+| [Streamlit](https://github.com/streamlit/streamlit) | Apache-2.0 | Optional web interface |
 | [OpenCV](https://github.com/opencv/opencv-python) | Apache-2.0 for OpenCV, with other terms for bundled components | Video and images |
 | [NumPy](https://numpy.org) | BSD-3-Clause | Image arrays |
 | [PyYAML](https://github.com/yaml/pyyaml) | MIT | Configuration |

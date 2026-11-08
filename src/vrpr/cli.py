@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import logging
 import os
 import signal
+import subprocess
 import sys
 import threading
 from collections.abc import Sequence
@@ -16,7 +18,7 @@ from pathlib import Path
 from vrpr import __version__
 from vrpr.config import AppConfig, load_config
 from vrpr.evaluate import evaluate, read_plates
-from vrpr.exceptions import ConfigError, VrprError
+from vrpr.exceptions import ConfigError, DependencyError, VrprError
 from vrpr.logging_setup import configure_logging
 from vrpr.pipeline import execute_run
 from vrpr.plates import parse_plate
@@ -103,6 +105,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parse.add_argument("text")
     parse.set_defaults(handler=_parse)
 
+    web = commands.add_parser("web", help="open the browser interface")
+    web.add_argument("--port", type=int, default=8501)
+    web.add_argument("--root", type=Path, default=Path(), help="project folder to work in")
+    web.add_argument("--no-browser", action="store_true", help="do not open a browser window")
+    web.set_defaults(handler=_web)
+
     return parser
 
 
@@ -180,6 +188,33 @@ def _evaluate(args: argparse.Namespace) -> int:
 def _dataset(args: argparse.Namespace) -> int:
     print(download_dataset(args.workspace, args.project, args.dataset_version, args.output))
     return EXIT_OK
+
+
+def _web(args: argparse.Namespace) -> int:
+    if importlib.util.find_spec("streamlit") is None:
+        raise DependencyError(
+            "The web interface needs Streamlit. Install it with: pip install -e .[web]"
+        )
+    if not args.root.is_dir():
+        raise ConfigError(f"Project folder not found: {args.root}")
+    app = Path(__file__).with_name("web") / "app.py"
+    command = [
+        sys.executable,
+        "-m",
+        "streamlit",
+        "run",
+        str(app),
+        "--server.address=localhost",  # Plates are personal data: never serve them to the network.
+        f"--server.port={args.port}",
+        f"--server.headless={'true' if args.no_browser else 'false'}",
+        "--server.maxUploadSize=2048",
+        "--browser.gatherUsageStats=false",
+        "--client.toolbarMode=minimal",  # Hides "Deploy", which offers to publish the app online.
+    ]
+    try:
+        return subprocess.call(command, cwd=args.root)  # noqa: S603 - fixed arguments, no shell
+    except KeyboardInterrupt:
+        return EXIT_OK
 
 
 def _parse(args: argparse.Namespace) -> int:
