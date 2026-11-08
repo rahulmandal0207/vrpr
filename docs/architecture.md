@@ -22,6 +22,7 @@
 | `consensus` | Combines readings of one vehicle into one result |
 | `sinks` | Writes CSV, JSON Lines and crops |
 | `rendering` | Optional preview window and annotated video |
+| `web` | The Streamlit page started by `vrpr web`, and its file and progress helpers |
 | `training` | Trains and measures the detector, and fetches datasets |
 | `evaluate` | Scores a run against labelled plates |
 

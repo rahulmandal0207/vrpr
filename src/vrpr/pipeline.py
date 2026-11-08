@@ -7,6 +7,7 @@ import logging
 import threading
 import time
 import uuid
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -194,8 +195,12 @@ def execute_run(
     stop: threading.Event | None = None,
     detector: Detector | None = None,
     ocr: OcrEngine | None = None,
+    observers: Sequence[FrameObserver] = (),
 ) -> RunSummary:
-    """Run the full pipeline on a source and write results to a new run directory."""
+    """Run the full pipeline on a source and write results to a new run directory.
+
+    ``observers`` receive every annotated frame, for example to show progress.
+    """
     # Models load first: a missing file should fail before any output is created.
     detector = detector or YoloDetector(config.detector)
     ocr = ocr or EasyOcrEngine(config.ocr)
@@ -205,11 +210,11 @@ def execute_run(
         run_dir: Path = config.output.directory / run_id
         run_dir.mkdir(parents=True)
 
-        observers: list[FrameObserver] = []
+        frame_observers: list[FrameObserver] = list(observers)
         if display:
-            observers.append(WindowPreview())
+            frame_observers.append(WindowPreview())
         if config.output.save_annotated_video:
-            observers.append(AnnotatedVideoWriter(run_dir / "annotated.mp4", video.fps))
+            frame_observers.append(AnnotatedVideoWriter(run_dir / "annotated.mp4", video.fps))
 
         pipeline = Pipeline(
             config,
@@ -218,7 +223,7 @@ def execute_run(
             ocr,
             sinks=[CsvSink(run_dir / "plates.csv"), JsonlSink(run_dir / "plates.jsonl")],
             crop_store=CropStore(run_dir / "crops") if config.output.save_crops else None,
-            observers=observers,
+            observers=frame_observers,
         )
         logger.info("Run %s started on %s", run_id, video.name)
         summary = pipeline.run(video, stop)

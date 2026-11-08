@@ -23,6 +23,7 @@ ml = [
     "easyocr>=1.7.2,<2",
 ]
 dataset = ["roboflow>=1.1"]
+web = ["streamlit>=1.40,<2"]
 dev = [
     "mypy>=1.11",
     "pre-commit>=3.7",
@@ -50,6 +51,9 @@ markers = ["integration: needs the real ML stack and downloaded models"]
 [tool.coverage.run]
 source = ["vrpr"]
 branch = true
+# Streamlit's AppTest runs the page script in a way coverage cannot trace. tests/test_web.py
+# drives it end to end, and the logic it calls lives in vrpr.web.runs, which is measured.
+omit = ["*/vrpr/web/app.py"]
 
 [tool.coverage.report]
 show_missing = true

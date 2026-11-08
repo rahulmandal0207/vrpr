@@ -81,6 +81,24 @@ To check how a piece of text would be read as a plate:
 vrpr parse "HR 26 DK 8337"
 ```
 
+## Web interface
+
+A browser page does the same as `vrpr run`: pick a video from `data/videos`, upload one, or enter
+a camera number or stream URL, then watch a live preview and browse the plates found. Earlier runs
+are listed under **Past runs**.
+
+```bash
+pip install -e ".[ml,web]"
+```
+
+```bash
+vrpr web
+```
+
+Run it from the project folder. It opens `http://localhost:8501`, and only this computer can reach
+it. Settings in the side panel start from `configs/default.yaml`. Uploads are saved to
+`data/uploads/`, which git ignores.
+
 ## Train a model
 
 The dataset is not in this repository. Download a YOLO-format dataset from Roboflow, or use any
