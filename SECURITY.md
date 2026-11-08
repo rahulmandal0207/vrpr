@@ -13,6 +13,6 @@ rather than in a public issue.
 - **Keep credentials out of config files you commit.** Stream URLs can contain a username and
   password. VRPR removes them from logs and `summary.json`, but not from your config file or shell
   history.
-- **Keep API keys in the environment.** `ROBOFLOW_API_KEY` is read from the environment, and `.env`
-  is ignored by git.
+- **Keep API keys out of git.** `ROBOFLOW_API_KEY` is read from the environment or from `.env` in
+  the folder you run `vrpr` from, and git ignores `.env`.
 - **Protect the output folder.** It holds personal data: see [docs/privacy.md](docs/privacy.md).

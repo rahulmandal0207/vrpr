@@ -40,6 +40,12 @@ class StubOcr:
         return [OcrFragment(text, 0.9, BoundingBox(0, 0, 100, 30))]
 
 
+@pytest.fixture(autouse=True)
+def isolated_working_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Run each test in an empty folder, so the CLI never reads the developer's own .env."""
+    monkeypatch.chdir(tmp_path)
+
+
 @pytest.fixture
 def config(tmp_path: Path) -> AppConfig:
     return AppConfig(

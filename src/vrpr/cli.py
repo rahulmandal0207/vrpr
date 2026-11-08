@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import signal
 import sys
 import threading
@@ -27,6 +28,29 @@ EXIT_OK = 0
 EXIT_FAILURE = 1
 EXIT_USAGE = 2
 EXIT_NO_MATCH = 3
+
+_QUOTES = ("'", '"')
+
+
+def load_dotenv(path: Path = Path(".env")) -> None:
+    """Read KEY=value lines from a .env file into the environment.
+
+    Variables already set win, so a value exported in the shell overrides the file.
+    """
+    try:
+        lines = path.read_text(encoding="utf-8-sig").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = (part.strip() for part in line.split("=", 1))
+        key = key.removeprefix("export ").strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in _QUOTES:
+            value = value[1:-1]
+        if key and value:
+            os.environ.setdefault(key, value)
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -168,6 +192,7 @@ def _parse(args: argparse.Namespace) -> int:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    load_dotenv()
     args = _build_parser().parse_args(argv)
     try:
         status: int = args.handler(args)

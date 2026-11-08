@@ -3,6 +3,7 @@
 import csv
 import json
 import logging
+import os
 import signal
 import sys
 import types
@@ -389,6 +390,67 @@ def test_download_needs_an_api_key(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.delenv("ROBOFLOW_API_KEY", raising=False)
     with pytest.raises(ConfigError, match="ROBOFLOW_API_KEY"):
         download_dataset("workspace", "project", 1, tmp_path)
+
+
+# The .env file
+
+
+def test_dotenv_supplies_missing_variables(tmp_path: Path, monkeypatch) -> None:
+    for name in ("VRPR_TEST_PLAIN", "VRPR_TEST_QUOTED", "VRPR_TEST_EMPTY"):
+        monkeypatch.delenv(name, raising=False)
+    path = tmp_path / ".env"
+    path.write_text(
+        '# comment\nVRPR_TEST_PLAIN=plain\nexport VRPR_TEST_QUOTED = "two words"\n'
+        "VRPR_TEST_EMPTY=\nnot a setting\n",
+        encoding="utf-8-sig",  # Notepad adds a byte order mark
+    )
+    cli.load_dotenv(path)
+    assert os.environ["VRPR_TEST_PLAIN"] == "plain"
+    assert os.environ["VRPR_TEST_QUOTED"] == "two words"
+    assert "VRPR_TEST_EMPTY" not in os.environ
+
+
+def test_shell_variables_win_over_dotenv(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("VRPR_TEST_PLAIN", "from shell")
+    path = tmp_path / ".env"
+    path.write_text("VRPR_TEST_PLAIN=from file", encoding="utf-8")
+    cli.load_dotenv(path)
+    assert os.environ["VRPR_TEST_PLAIN"] == "from shell"
+
+
+def test_missing_or_unreadable_dotenv_is_ignored(tmp_path: Path) -> None:
+    cli.load_dotenv(tmp_path / "missing.env")
+    path = tmp_path / ".env"
+    path.write_text("VRPR_TEST_PLAIN=x", encoding="utf-16")
+    cli.load_dotenv(path)
+
+
+def test_dataset_command_reads_the_api_key_from_dotenv(tmp_path: Path, monkeypatch) -> None:
+    """Following .env.example used to fail, because nothing read the .env file."""
+    monkeypatch.delenv("ROBOFLOW_API_KEY", raising=False)
+    (tmp_path / ".env").write_text("ROBOFLOW_API_KEY=key-from-file", encoding="utf-8")
+    seen = {}
+
+    class FakeRoboflow:
+        def __init__(self, api_key: str) -> None:
+            seen["api_key"] = api_key
+
+        def workspace(self, name: str) -> "FakeRoboflow":
+            return self
+
+        def project(self, name: str) -> "FakeRoboflow":
+            return self
+
+        def version(self, number: int) -> "FakeRoboflow":
+            return self
+
+        def download(self, model_format: str, location: str) -> types.SimpleNamespace:
+            return types.SimpleNamespace(location=location)
+
+    monkeypatch.setitem(sys.modules, "roboflow", types.SimpleNamespace(Roboflow=FakeRoboflow))
+    arguments = ["dataset", "--workspace", "w", "--project", "p", "--version", "3"]
+    assert cli.main(arguments) == cli.EXIT_OK
+    assert seen["api_key"] == "key-from-file"
 
 
 # Logging and the command line

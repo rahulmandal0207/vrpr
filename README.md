@@ -83,8 +83,9 @@ vrpr parse "HR 26 DK 8337"
 
 ## Train a model
 
-The dataset is not in this repository. Download a YOLO-format dataset from Roboflow with your API
-key in the `ROBOFLOW_API_KEY` environment variable, or use any dataset that has a `data.yaml`.
+The dataset is not in this repository. Download a YOLO-format dataset from Roboflow, or use any
+dataset that has a `data.yaml`. For Roboflow, copy `.env.example` to `.env` and put your private API
+key in it. Git ignores `.env`, and a `ROBOFLOW_API_KEY` set in your shell takes priority over it.
 
 ```bash
 vrpr dataset --workspace <workspace> --project <project> --version 3
