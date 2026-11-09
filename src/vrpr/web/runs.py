@@ -72,6 +72,26 @@ class FrameLimit:
         pass
 
 
+def progress_text(frames: int, total: int | None, seconds_since_first: float) -> str:
+    """Describe a run's progress, with its speed and time left once these can be estimated.
+
+    ``seconds_since_first`` is timed from the first frame, so model loading does not count.
+    Analysis is often slower than the video plays, and the speed tells visitors the page is
+    working rather than stuck.
+    """
+    text = f"Frame {frames} of {total}" if total and frames <= total else f"Frame {frames}"
+    if frames < 2 or seconds_since_first <= 0:
+        return text
+    speed = (frames - 1) / seconds_since_first
+    text += f" · {speed:.1f} frames a second"
+    if total and frames < total:
+        remaining = round((total - frames) / speed)
+        minutes, seconds = divmod(remaining, 60)
+        left = f"{minutes} min {seconds} s" if minutes else f"{seconds} s"
+        text += f" · about {left} left"
+    return text
+
+
 @dataclass(frozen=True, slots=True)
 class RunResults:
     run_id: str

@@ -21,6 +21,15 @@ differ from before: see the README.
 - A browser interface, `vrpr web`, with a live preview, plate gallery and past runs.
 - A public demo mode for Streamlit Community Cloud, started by `streamlit_app.py`, with a CC0
   sample clip, private per-visitor sessions, a 50 MB upload limit and a 15-second cap.
+- Speed and time left in the web page's progress bar.
+
+### Performance
+
+- On the CPU, PyTorch's threads are limited to the cores a container may use. Ultralytics set
+  up to 8 from the machine's core count, which slowed capped hosts such as Streamlit Community
+  Cloud.
+- The public demo reads plates on every second frame: 24% faster on one core, with the same
+  plates right on two clips with answer keys.
 - Tests, type checks, linting, CI, a Dockerfile and documentation.
 
 ### Fixed

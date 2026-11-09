@@ -78,5 +78,5 @@ strict = true
 files = ["src"]
 
 [[tool.mypy.overrides]]
-module = ["ultralytics.*", "easyocr.*", "roboflow.*"]
+module = ["ultralytics.*", "easyocr.*", "roboflow.*", "torch", "torch.*"]
 ignore_missing_imports = true

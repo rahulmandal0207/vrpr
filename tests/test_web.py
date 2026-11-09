@@ -359,6 +359,26 @@ def test_frame_limit_stops_the_run_at_the_limit() -> None:
     assert limit.reached
 
 
+def test_progress_text_starts_with_the_frame_only() -> None:
+    assert runs.progress_text(1, 240, 0.0) == "Frame 1 of 240"
+    assert runs.progress_text(1, None, 0.0) == "Frame 1"
+
+
+def test_progress_text_shows_speed_and_time_left() -> None:
+    # 20 frames after the first in 10 seconds is 2 a second, and 219 frames are left.
+    assert runs.progress_text(21, 240, 10.0) == (
+        "Frame 21 of 240 · 2.0 frames a second · about 1 min 50 s left"
+    )
+    assert runs.progress_text(231, 240, 23.0) == (
+        "Frame 231 of 240 · 10.0 frames a second · about 1 s left"
+    )
+
+
+def test_progress_text_past_an_estimated_total_shows_only_speed() -> None:
+    assert runs.progress_text(251, 240, 50.0) == "Frame 251 · 5.0 frames a second"
+    assert runs.progress_text(11, None, 5.0) == "Frame 11 · 2.0 frames a second"
+
+
 @pytest.fixture
 def public_page(app_test, monkeypatch, tmp_path: Path, make_video):
     """The page as a public host serves it, with a sample video and a private temp folder."""
