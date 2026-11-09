@@ -1,4 +1,11 @@
-"""Turn many per-frame readings of a vehicle into one reported plate."""
+"""Turn many readings of a vehicle, across all its tracks, into one reported plate.
+
+The tracker often loses a plate for a moment and starts a new track for it, so one vehicle can
+have many tracks, each with a few misreads of its own. Each track collects readings. When a track
+ends, its readings join the vehicle whose plate it resembles, if that vehicle was seen recently,
+or start a new vehicle. A vehicle is reported once nothing has joined it for
+``report_delay_seconds``, with the plate most of its readings agree on.
+"""
 
 from __future__ import annotations
 
@@ -8,7 +15,7 @@ from vrpr.config import ConsensusConfig
 from vrpr.models import Frame, PlateReading, PlateRecord
 from vrpr.plates import edit_distance
 
-# Readings this close to a reported plate are treated as misreads of it.
+# Plates this close are treated as misreads of each other.
 _MISREAD_DISTANCE = 2
 
 
@@ -20,15 +27,52 @@ class _Tally:
     best_confidence: float = -1.0
     best_crop: Frame | None = None
 
+    def absorb(self, other: _Tally) -> None:
+        self.votes += other.votes
+        self.confidence_sum += other.confidence_sum
+        if other.best_confidence > self.best_confidence:
+            self.best_confidence = other.best_confidence
+            self.best_crop = other.best_crop
+
 
 @dataclass(slots=True)
-class _TrackVotes:
+class _Evidence:
+    """Readings of one track, or of all the tracks of one vehicle."""
+
     first_frame: int
     last_frame: int
-    timestamp_s: float
+    first_seen_s: float
+    last_seen_s: float
     tallies: dict[str, _Tally] = field(default_factory=dict)
     total_reads: int = 0
-    reported_plate: str | None = None
+
+    def leading(self) -> str:
+        return max(
+            self.tallies,
+            key=lambda plate: (self.tallies[plate].votes, self.tallies[plate].confidence_sum),
+        )
+
+    def absorb(self, other: _Evidence) -> None:
+        self.first_frame = min(self.first_frame, other.first_frame)
+        self.last_frame = max(self.last_frame, other.last_frame)
+        self.first_seen_s = min(self.first_seen_s, other.first_seen_s)
+        self.last_seen_s = max(self.last_seen_s, other.last_seen_s)
+        self.total_reads += other.total_reads
+        for plate, tally in other.tallies.items():
+            self.tallies.setdefault(plate, _Tally(tally.plate_format)).absorb(tally)
+
+
+@dataclass(slots=True)
+class _Track:
+    evidence: _Evidence
+    settled: bool = False
+
+
+@dataclass(slots=True)
+class _Vehicle:
+    evidence: _Evidence
+    track_ids: list[int]
+    reported: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,19 +87,19 @@ class ConsensusEngine:
     def __init__(self, config: ConsensusConfig, run_id: str) -> None:
         self._config = config
         self._run_id = run_id
-        self._tracks: dict[int, _TrackVotes] = {}
-        self._last_reported: dict[str, float] = {}
+        self._tracks: dict[int, _Track] = {}
+        self._vehicles: list[_Vehicle] = []
         self.duplicates_suppressed = 0
         self.tracks_unread = 0
 
     def needs_ocr(self, track_id: int, frame_index: int) -> bool:
         """Say whether to read a track on this frame.
 
-        A settled track is only rechecked now and then, which saves OCR while
-        still noticing if the tracker has moved it onto a different vehicle.
+        Once ``min_agreement`` readings of a track agree, it is only rechecked now and then,
+        which saves OCR while still noticing if the tracker has moved onto another vehicle.
         """
-        votes = self._tracks.get(track_id)
-        if votes is None or votes.reported_plate is None:
+        track = self._tracks.get(track_id)
+        if track is None or not track.settled:
             return True
         return frame_index % self._config.recheck_every_n_frames == 0
 
@@ -66,77 +110,118 @@ class ConsensusEngine:
         crop: Frame,
         frame_index: int,
         timestamp_s: float,
-    ) -> FinalizedPlate | None:
-        """Record a reading. Returns a result as soon as enough readings agree."""
-        votes = self._tracks.get(track_id)
-        if votes is None or self._is_different_vehicle(votes, reading.plate):
-            # A false alarm costs little: if the old plate wins again, it is a repeat
-            # and gets suppressed. Missing a real switch would lose a vehicle.
-            votes = _TrackVotes(frame_index, frame_index, timestamp_s)
-            self._tracks[track_id] = votes
-        votes.last_frame = frame_index
-        votes.total_reads += 1
+    ) -> None:
+        track = self._tracks.get(track_id)
+        if (
+            track is not None
+            and track.settled
+            and edit_distance(track.evidence.leading(), reading.plate) > _MISREAD_DISTANCE
+        ):
+            # The tracker has moved onto another vehicle: what it read so far belongs to
+            # the first one, and this track starts afresh.
+            self._file(track_id, track.evidence)
+            track = None
+        if track is None:
+            track = _Track(_Evidence(frame_index, frame_index, timestamp_s, timestamp_s))
+            self._tracks[track_id] = track
 
-        tally = votes.tallies.setdefault(reading.plate, _Tally(reading.plate_format))
-        tally.votes += 1
-        tally.confidence_sum += reading.confidence
-        if reading.confidence > tally.best_confidence:
-            tally.best_confidence = reading.confidence
-            tally.best_crop = crop
+        evidence = track.evidence
+        evidence.last_frame = frame_index
+        evidence.last_seen_s = timestamp_s
+        evidence.total_reads += 1
+        tally = evidence.tallies.setdefault(reading.plate, _Tally(reading.plate_format))
+        tally.absorb(_Tally(reading.plate_format, 1, reading.confidence, reading.confidence, crop))
+        if tally.votes >= self._config.min_agreement:
+            track.settled = True
 
-        if votes.reported_plate is not None or tally.votes < self._config.min_agreement:
-            return None
-        return self._finalize(track_id, votes, reading.plate, timestamp_s)
-
-    def close_track(self, track_id: int, timestamp_s: float) -> FinalizedPlate | None:
-        """Report whatever a finished track collected, if it is strong enough."""
-        votes = self._tracks.pop(track_id, None)
-        if votes is None:
+    def close_track(self, track_id: int) -> None:
+        """Hand a finished track's readings to its vehicle."""
+        track = self._tracks.pop(track_id, None)
+        if track is None:
             self.tracks_unread += 1
-            return None
-        if votes.reported_plate is not None:
-            return None
+            return
+        self._file(track_id, track.evidence)
 
-        plate = max(votes.tallies, key=lambda key: votes.tallies[key].confidence_sum)
-        if votes.tallies[plate].votes < self._config.min_votes_on_close:
-            self.tracks_unread += 1
-            return None
-        return self._finalize(track_id, votes, plate, timestamp_s)
+    def poll(self, now_s: float) -> list[FinalizedPlate]:
+        """Report vehicles nothing has joined for ``report_delay_seconds``."""
+        reports = []
+        for vehicle in self._vehicles:
+            idle = now_s - vehicle.evidence.last_seen_s >= self._config.report_delay_seconds
+            if not vehicle.reported and idle and not self._still_in_view(vehicle):
+                finalized = self._report(vehicle)
+                if finalized is not None:
+                    reports.append(finalized)
+        window = self._config.dedupe_window_seconds
+        self._vehicles = [
+            v for v in self._vehicles if not v.reported or now_s - v.evidence.last_seen_s <= window
+        ]
+        return reports
 
-    @staticmethod
-    def _is_different_vehicle(votes: _TrackVotes, plate: str) -> bool:
-        reported = votes.reported_plate
-        return reported is not None and edit_distance(reported, plate) > _MISREAD_DISTANCE
+    def flush(self) -> list[FinalizedPlate]:
+        """Report every vehicle still waiting, at the end of a run."""
+        for track_id in list(self._tracks):
+            self.close_track(track_id)
+        reports = []
+        for vehicle in self._vehicles:
+            if not vehicle.reported:
+                finalized = self._report(vehicle)
+                if finalized is not None:
+                    reports.append(finalized)
+        return reports
 
-    def _finalize(
-        self, track_id: int, votes: _TrackVotes, plate: str, timestamp_s: float
-    ) -> FinalizedPlate | None:
-        votes.reported_plate = plate
-        self._forget_old_plates(timestamp_s)
-        if plate in self._last_reported:
-            # A vehicle lost and re-acquired by the tracker gets a new id, not a new row.
-            self._last_reported[plate] = timestamp_s
+    def _match(self, evidence: _Evidence) -> _Vehicle | None:
+        plate = evidence.leading()
+        window = self._config.dedupe_window_seconds
+        candidates = [
+            (edit_distance(vehicle.evidence.leading(), plate), -vehicle.evidence.last_seen_s, i)
+            for i, vehicle in enumerate(self._vehicles)
+            if evidence.first_seen_s - vehicle.evidence.last_seen_s <= window
+        ]
+        close = [c for c in candidates if c[0] <= _MISREAD_DISTANCE]
+        return self._vehicles[min(close)[2]] if close else None
+
+    def _file(self, track_id: int, evidence: _Evidence) -> None:
+        vehicle = self._match(evidence)
+        if vehicle is None:
+            self._vehicles.append(_Vehicle(evidence, [track_id]))
+            return
+        if vehicle.reported:
+            # Seen again after it was reported: one row per sighting, not per track.
             self.duplicates_suppressed += 1
-            return None
-        self._last_reported[plate] = timestamp_s
+        vehicle.evidence.absorb(evidence)
+        vehicle.track_ids.append(track_id)
 
-        tally = votes.tallies[plate]
+    def _still_in_view(self, vehicle: _Vehicle) -> bool:
+        plate = vehicle.evidence.leading()
+        return any(
+            edit_distance(track.evidence.leading(), plate) <= _MISREAD_DISTANCE
+            for track in self._tracks.values()
+        )
+
+    def _report(self, vehicle: _Vehicle) -> FinalizedPlate | None:
+        vehicle.reported = True
+        evidence = vehicle.evidence
+        plate = evidence.leading()
+        tally = evidence.tallies[plate]
+        if tally.votes < self._config.min_votes_on_close:
+            self.tracks_unread += len(vehicle.track_ids)
+            return None
         record = PlateRecord(
             run_id=self._run_id,
-            track_id=track_id,
+            track_id=vehicle.track_ids[0],
             plate=plate,
             plate_format=tally.plate_format,
             confidence=round(tally.confidence_sum / tally.votes, 4),
             votes=tally.votes,
-            total_reads=votes.total_reads,
-            first_frame=votes.first_frame,
-            last_frame=votes.last_frame,
-            timestamp_s=round(votes.timestamp_s, 3),
+            total_reads=evidence.total_reads,
+            first_frame=evidence.first_frame,
+            last_frame=evidence.last_frame,
+            timestamp_s=round(evidence.first_seen_s, 3),
+            # Enough readings agree, and no rival readings outnumber them. This measures
+            # consistency, not truth: OCR can repeat the same misread many times.
+            confirmed=(
+                tally.votes >= self._config.min_agreement
+                and tally.votes * 2 >= evidence.total_reads
+            ),
         )
         return FinalizedPlate(record, tally.best_crop)
-
-    def _forget_old_plates(self, now_s: float) -> None:
-        window = self._config.dedupe_window_seconds
-        self._last_reported = {
-            plate: seen for plate, seen in self._last_reported.items() if now_s - seen <= window
-        }

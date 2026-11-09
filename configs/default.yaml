@@ -9,9 +9,10 @@ ocr:
   languages: [en]
   gpu: true            # falls back to CPU when no GPU is available
   min_confidence: 0.2  # ignore OCR fragments below this
-  every_n_frames: 2    # OCR is the slowest stage
-  crop_padding: 0.05   # share of the box added on each side
-  min_crop_height: 64  # smaller crops are upscaled before OCR
+  every_n_frames: 1    # read every frame until a plate is settled; OCR is the slowest stage,
+                       # but a single frame is often misread, so more readings vote
+  crop_padding: 0.05   # share of the box added on each side; more padding read worse
+  min_crop_height: 128 # smaller crops are upscaled before OCR; 128 read better than 64
 
 tracker:
   max_age: 5           # frames a plate may go undetected before its track ends;
@@ -20,10 +21,12 @@ tracker:
   iou_threshold: 0.2
 
 consensus:
-  min_agreement: 3     # identical readings needed to report early
-  min_votes_on_close: 1  # readings needed to report when a track ends
-  dedupe_window_seconds: 30  # same plate within this window is one sighting
+  min_agreement: 3     # identical readings needed to report early, and to mark a plate confirmed
+  min_votes_on_close: 1  # readings needed to report when a track ends; fewer than
+                         # min_agreement are reported as unconfirmed
+  dedupe_window_seconds: 30  # tracks with near-identical plates this close in time are one vehicle
   recheck_every_n_frames: 16  # how often a settled track is read again
+  report_delay_seconds: 3.0  # report a vehicle once nothing has joined it for this long
 
 output:
   directory: output

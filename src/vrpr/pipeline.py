@@ -75,12 +75,10 @@ class Pipeline:
         """Process the source until it ends, then settle every open track."""
         started = time.perf_counter()
         frames = 0
-        last_timestamp = 0.0
         stopped_early = False
         try:
             for packet in source.frames():
                 frames += 1
-                last_timestamp = packet.timestamp_s
                 tracks = self._process(packet)
                 if not self._notify_observers(packet, tracks) or (stop and stop.is_set()):
                     stopped_early = True
@@ -88,7 +86,9 @@ class Pipeline:
         finally:
             # Results already collected are saved even if a stage raised.
             for track_id in self._tracker.flush():
-                self._close_track(track_id, last_timestamp)
+                self._close_track(track_id)
+            for finalized in self._consensus.flush():
+                self._emit(finalized)
             self._close_outputs()
 
         duration = time.perf_counter() - started
@@ -116,7 +116,9 @@ class Pipeline:
             for track in update.active:
                 self._read_track(track, packet)
         for track_id in update.expired:
-            self._close_track(track_id, packet.timestamp_s)
+            self._close_track(track_id)
+        for finalized in self._consensus.poll(packet.timestamp_s):
+            self._emit(finalized)
         return update.active
 
     def _read_track(self, track: Track, packet: FramePacket) -> None:
@@ -138,17 +140,11 @@ class Pipeline:
         reading = read_plate(fragments, settings.min_confidence)
         if reading is None:
             return
-        finalized = self._consensus.add_reading(
-            track.track_id, reading, crop, packet.index, packet.timestamp_s
-        )
-        if finalized is not None:
-            self._emit(finalized)
+        self._consensus.add_reading(track.track_id, reading, crop, packet.index, packet.timestamp_s)
 
-    def _close_track(self, track_id: int, timestamp_s: float) -> None:
+    def _close_track(self, track_id: int) -> None:
         self._labels.pop(track_id, None)
-        finalized = self._consensus.close_track(track_id, timestamp_s)
-        if finalized is not None:
-            self._emit(finalized)
+        self._consensus.close_track(track_id)
 
     def _emit(self, finalized: FinalizedPlate) -> None:
         record = finalized.record
@@ -161,12 +157,13 @@ class Pipeline:
         self._plates += 1
         self._labels[record.track_id] = record.plate
         logger.info(
-            "Plate %s on track %d (%d of %d reads agree, confidence %.2f)",
+            "Plate %s on track %d (%d of %d reads agree, confidence %.2f)%s",
             mask_plate(record.plate),
             record.track_id,
             record.votes,
             record.total_reads,
             record.confidence,
+            "" if record.confirmed else ", unconfirmed",
         )
 
     def _notify_observers(self, packet: FramePacket, tracks: list[Track]) -> bool:

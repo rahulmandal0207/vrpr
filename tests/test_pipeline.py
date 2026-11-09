@@ -66,10 +66,8 @@ def test_plate_read_after_a_newer_one_is_kept(config: AppConfig, make_video) -> 
     # Track 2 settles in the first two frames. Track 1 is unreadable until after that.
     ocr = OcrByRegion("", "HR26DK8337", "", "HR26DK8337", "MH12AB1234", "", "MH12AB1234", "")
     summary = execute_run(config, str(make_video(6)), detector=detector, ocr=ocr)
-    assert [(row["track_id"], row["plate"]) for row in rows(config, summary.run_id)] == [
-        ("2", "HR26DK8337"),
-        ("1", "MH12AB1234"),
-    ]
+    reported = {(row["track_id"], row["plate"]) for row in rows(config, summary.run_id)}
+    assert reported == {("2", "HR26DK8337"), ("1", "MH12AB1234")}
 
 
 def test_next_vehicle_on_the_same_track_is_still_reported(config: AppConfig, make_video) -> None:
@@ -123,10 +121,13 @@ def test_output_directories_are_created(tmp_path: Path, config: AppConfig, make_
 
 
 def test_lost_and_reacquired_plate_is_one_row(config: AppConfig, make_video) -> None:
+    """Both tracks of the vehicle are pooled, so the row carries all their readings."""
     detector = ScriptedDetector([[box(10)]] * 3 + [[]] * 3 + [[box(10)]] * 3)
-    summary = execute_run(config, str(make_video(9)), detector=detector, ocr=StubOcr("HR26DK8337"))
-    assert len(rows(config, summary.run_id)) == 1
-    assert summary.duplicates_suppressed == 1
+    ocr = StubOcr("HR26DK8337")
+    summary = execute_run(config, str(make_video(9)), detector=detector, ocr=ocr)
+    [row] = rows(config, summary.run_id)
+    assert row["plate"] == "HR26DK8337"
+    assert int(row["total_reads"]) == len(ocr.images) == 4, "two settled tracks, two reads each"
 
 
 def test_ocr_stops_once_a_plate_is_settled(config: AppConfig, make_video) -> None:

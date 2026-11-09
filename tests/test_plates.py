@@ -25,7 +25,7 @@ def fragment(text: str, y: float = 0, x: float = 0, confidence: float = 0.9) -> 
         ("HR26.DK8337 ", "HR26DK8337", STANDARD),
         ("DL 3C AB 1234", "DL3CAB1234", STANDARD),
         ("DL10CAB1234", "DL10CAB1234", STANDARD),
-        ("KA05 1234", "KA051234", STANDARD),
+        ("UP80CB0067", "UP80CB0067", STANDARD),
         ("22 BH 1234 AA", "22BH1234AA", BHARAT),
         ("22BH1234A", "22BH1234A", BHARAT),
         ("IND HR26DK8337", "HR26DK8337", STANDARD),
@@ -64,6 +64,32 @@ def test_series_letter_is_not_rewritten_as_a_digit() -> None:
 )
 def test_rejects_non_plates(text: str) -> None:
     assert parse_plate(text) is None
+
+
+@pytest.mark.parametrize(
+    ("text", "why"),
+    [
+        ("UP8CB0067", "UP80CB0067 with a digit dropped, misread on real dashcam footage"),
+        ("PB0CD3389", "a fragment of UP80CD3389 from the same footage"),
+        ("HR6KA8337", "HR26KA8337 with a digit dropped: only Delhi writes a one-digit RTO code"),
+        ("KA051234", "no series letters: usually part of a longer plate"),
+    ],
+)
+def test_rejects_fragments_that_look_like_plates(text: str, why: str) -> None:
+    assert parse_plate(text) is None, why
+
+
+def test_one_digit_rto_codes_are_kept_for_delhi() -> None:
+    parsed = parse_plate("DL 3C AB 1234")
+    assert parsed is not None
+    assert parsed.plate == "DL3CAB1234"
+
+
+def test_a_dropped_letter_repair_prefers_the_two_digit_code() -> None:
+    """With one-digit codes limited to Delhi, MH1Z... can only be MH 12."""
+    parsed = parse_plate("MH1ZAB1234")
+    assert parsed is not None
+    assert parsed.plate == "MH12AB1234"
 
 
 def test_normalize_keeps_only_uppercase_alphanumerics() -> None:

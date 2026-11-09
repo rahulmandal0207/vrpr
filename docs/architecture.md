@@ -31,32 +31,52 @@ without them. To use a different model, implement the protocol and pass it to `e
 
 ## Decisions
 
-### A track reports when readings agree, or when it ends
+### One report per vehicle, after it leaves
 
-Taking the first valid reading makes one bad frame final. Waiting for the track to end delays every
-result until the vehicle has left. VRPR reports as soon as `min_agreement` readings match, then
-reads that track only occasionally. A track that ends first reports its highest-scoring plate, so
-vehicles seen only briefly are not lost.
+The tracker often loses a plate for a moment, as the vehicle moves or the detector misses a frame,
+and starts a new track for it. On a real 34-second dashcam clip, one car had 10 tracks. Reporting
+per track turned each track's small misreads into separate plates for the same car.
 
-### Identity comes from the tracker, duplicates from the plate
+So readings are pooled per vehicle. Each track collects readings, and stops reading once
+`min_agreement` of them match, apart from occasional rechecks. When a track ends, its readings join
+the vehicle whose plate is within two characters of its own, if that vehicle was seen within
+`dedupe_window_seconds`; otherwise they start a new vehicle. A vehicle is reported once nothing has
+joined it for `report_delay_seconds` and no open track still looks like it, with the plate that has
+the most votes across all its tracks. A vehicle that joins one already reported counts as a
+suppressed duplicate. On that clip, this cut 16 rows to 10, one per vehicle, and wrong rows from 12
+to 6. The cost is that a vehicle appears a few seconds after it leaves the picture.
 
-The tracker cannot know that a vehicle it lost and found again is the same one, so that vehicle gets
-a new track. The consensus stage remembers recently reported plates and drops a repeat inside
-`dedupe_window_seconds`. This also means a plate is reported again if the same vehicle returns
-later, which is usually what a log of sightings should show.
+`confirmed` is true when at least `min_agreement` readings agree and they are at least half of all
+the vehicle's readings. It measures consistency, not truth: EasyOCR repeats some misreads, such as
+an `M` read as `H`, often enough to be confirmed. Treat it as a strong hint.
+
+Agreement still matters because single frames are unreliable. EasyOCR read one car's plate
+correctly in about 1 frame in 10, yet that was still its most common reading, which is why OCR reads
+every frame until a plate settles (`ocr.every_n_frames: 1`) and upscales crops to 128 pixels high.
+Contrast enhancement, beam-search decoding, extra crop padding and skipping EasyOCR's text detector
+all made results worse or no better. Voting cannot fix a misread that EasyOCR makes most of the
+time: on the clip above, it read `AP28CC4284` as `AP28CC6284` twice as often as correctly. That
+needs an OCR model trained on Indian plates.
+
+### Identity comes from the tracker, sightings from the plate
+
+Pooling uses only the plate, so a vehicle that returns after `dedupe_window_seconds` is reported
+again, which is what a log of sightings should show. Two different vehicles whose plates are within
+two characters of each other, seen within the window, would be merged; that is rare, and the window
+keeps it unlikely.
 
 ### Splitting a track is cheap, merging one is not
 
-If the tracker splits one vehicle into two tracks, the consensus stage drops the repeat and nothing
-is lost. If it merges two vehicles into one track, the second vehicle is lost, because its track
+If the tracker splits one vehicle into two tracks, the consensus stage pools them and nothing is
+lost. If it merges two vehicles into one track, the second vehicle is lost, because its track
 already counts as settled. This happened on the first real end-to-end run: a track coasted across a
 gap between vehicles and took over the next one in the lane.
 
 Two things guard against it. `tracker.max_age` is kept low, so a track ends quickly instead of
 coasting onto another vehicle. And a settled track is read again every
-`consensus.recheck_every_n_frames` frames. If that reading is clearly a different plate, voting
-starts over on that track. A reading within two characters of the reported plate counts as a
-misread of it.
+`consensus.recheck_every_n_frames` frames. If that reading is clearly a different plate, the
+readings so far go to the first vehicle and the track starts afresh for the second. A reading
+within two characters of the settled plate counts as a misread of it.
 
 ### Correct OCR only where the layout allows it
 
@@ -64,6 +84,12 @@ misread of it.
 applies a correction only in a position that demands that character class, and refuses to build a
 three-letter series out of a repaired digit. A wrong plate is worse than a missing one, because
 nothing downstream would question it.
+
+For the same reason, two shapes that OCR often produces from a partly read plate are refused:
+a one-digit RTO code outside Delhi, which is the only state that writes one (`UP8CB0067` is
+`UP80CB0067` with a digit dropped), and a plate without series letters. Each part of the plate is
+checked in its own slot, rather than matching the whole text against one pattern, so a layout
+cannot pass by borrowing a shape from another layout.
 
 ### A dedicated tracker
 

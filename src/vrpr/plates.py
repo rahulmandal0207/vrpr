@@ -56,7 +56,8 @@ STATE_CODES = frozenset(
     ]
 )
 
-_STANDARD_RE = re.compile(r"[A-Z]{2}[0-9]{1,2}[A-Z]{0,3}[0-9]{4}")
+# Only Delhi writes its RTO code without a leading zero, as in DL 3C AB 1234.
+_ONE_DIGIT_RTO_STATES = frozenset({"DL"})
 _BHARAT_RE = re.compile(r"[0-9]{2}BH[0-9]{4}[A-Z]{1,2}")
 
 # OCR confuses these glyphs. Each map is applied only where the plate layout
@@ -108,7 +109,7 @@ def _count_changes(original: str, corrected: str) -> int:
 
 
 def _parse_standard(cleaned: str) -> ParsedPlate | None:
-    if not 7 <= len(cleaned) <= 11:
+    if not 8 <= len(cleaned) <= 11:
         return None
 
     scored: list[tuple[int, ParsedPlate]] = []
@@ -126,7 +127,21 @@ def _parse_standard(cleaned: str) -> ParsedPlate | None:
             + corrected_series
             + _as_digits(cleaned[series_end:])
         )
-        if not _STANDARD_RE.fullmatch(corrected) or corrected[:2] not in STATE_CODES:
+        state, rto, number = corrected[:2], corrected[2:rto_end], corrected[series_end:]
+        # Check each part in its own slot. A pattern for the whole plate let UP8CB0067
+        # through the two-digit layout, because the pattern also allows one digit.
+        # Series letters are required: without them, fragments of a longer plate pass.
+        if not (
+            state in STATE_CODES
+            and rto.isdigit()
+            and corrected_series.isalpha()
+            and len(corrected_series) <= _LONG_SERIES
+            and number.isdigit()
+        ):
+            continue
+        # A dropped digit, as in UP8CB0067 for UP80CB0067, would otherwise read as a
+        # valid one-digit RTO code.
+        if rto_length == 1 and state not in _ONE_DIGIT_RTO_STATES:
             continue
         # Three-letter series are rare. Accept one only as read, never by repairing
         # a stray digit into it, and prefer any other layout that fits as well.

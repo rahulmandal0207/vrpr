@@ -38,9 +38,9 @@ class OcrConfig:
     languages: tuple[str, ...] = ("en",)
     gpu: bool = True
     min_confidence: float = 0.2
-    every_n_frames: int = 2
+    every_n_frames: int = 1
     crop_padding: float = 0.05
-    min_crop_height: int = 64
+    min_crop_height: int = 128
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "languages", tuple(self.languages))
@@ -69,12 +69,16 @@ class ConsensusConfig:
     min_votes_on_close: int = 1
     dedupe_window_seconds: float = 30.0
     recheck_every_n_frames: int = 16
+    report_delay_seconds: float = 3.0
 
     def __post_init__(self) -> None:
         _require(self.min_agreement >= 1, "consensus.min_agreement must be at least 1")
         _require(self.min_votes_on_close >= 1, "consensus.min_votes_on_close must be at least 1")
         _require(
             self.recheck_every_n_frames >= 1, "consensus.recheck_every_n_frames must be at least 1"
+        )
+        _require(
+            self.report_delay_seconds >= 0, "consensus.report_delay_seconds must not be negative"
         )
         _require(
             self.dedupe_window_seconds >= 0, "consensus.dedupe_window_seconds must not be negative"

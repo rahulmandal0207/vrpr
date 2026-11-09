@@ -105,6 +105,9 @@ class PlateRecord:
     first_frame: int
     last_frame: int
     timestamp_s: float
+    # True when at least ``consensus.min_agreement`` readings agreed. A plate reported
+    # only because its vehicle left the picture is a best guess, and False here.
+    confirmed: bool = True
     crop_path: str | None = None
 
     def to_dict(self) -> dict[str, Any]:

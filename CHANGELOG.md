@@ -32,6 +32,12 @@ differ from before: see the README.
 - OCR kept running on plates that had already been logged.
 - A vehicle lost for two frames could be logged again under a new track.
 - `python Src/main.py` failed outside PyCharm because `Utils` could not be imported.
+- Partial reads such as `UP8CB0067` (for `UP80CB0067`) were accepted as plates, because the
+  whole-plate pattern let a dropped digit pass as a one-digit RTO code.
+- One vehicle was reported several times with slightly different plates, because the tracker
+  restarts on the same plate and each track reported its own misreads. Readings are now pooled
+  per vehicle. On a real 34-second dashcam clip with a hand-checked answer key, rows fell from 16
+  to 10, one per vehicle, and wrong rows from 12 to 6.
 
 ### Changed
 
@@ -40,6 +46,12 @@ differ from before: see the README.
 - Replaced `requirements.txt`, which was UTF-16, with `pyproject.toml`.
 - Updated Ultralytics from 8.0 to 8.3 or later.
 - Logs now mask plate numbers.
+- OCR reads every frame until a plate is settled, on crops upscaled to 128 pixels high, so more
+  readings vote. One-digit RTO codes are accepted only for Delhi, and series letters are required.
+- Results have a `confirmed` field: true when at least `min_agreement` readings agree and they are
+  at least half of the vehicle's readings. The web page marks the others as unconfirmed.
+- A vehicle is reported once it has left the picture for `report_delay_seconds` (3 by default),
+  not as soon as its first track settles.
 
 ### Removed
 

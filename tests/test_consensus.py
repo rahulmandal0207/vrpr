@@ -16,121 +16,184 @@ def engine(**settings: float) -> ConsensusEngine:
     return ConsensusEngine(ConsensusConfig(**settings), "run")  # type: ignore[arg-type]
 
 
-def test_reports_once_readings_agree_and_stops_ocr() -> None:
+def read(consensus: ConsensusEngine, track: int, plates: list[str], start: float = 0.0) -> None:
+    """Add one reading per plate to a track, a tenth of a second apart."""
+    for offset, plate in enumerate(plates):
+        frame = round(start * 10) + offset
+        consensus.add_reading(track, reading(plate), CROP, frame, start + offset / 10)
+
+
+def plates(reports) -> list[str]:
+    return [finalized.record.plate for finalized in reports]
+
+
+# Reading a track
+
+
+def test_a_track_stops_reading_once_readings_agree() -> None:
     consensus = engine(min_agreement=2)
     assert consensus.needs_ocr(1, 0)
-    assert consensus.add_reading(1, reading(), CROP, 0, 0.0) is None
-    finalized = consensus.add_reading(1, reading(), CROP, 1, 0.1)
-    assert finalized is not None
-    assert finalized.record.plate == "HR26DK8337"
-    assert finalized.record.votes == 2
+    read(consensus, 1, ["HR26DK8337", "HR26DK8337"])
     assert not consensus.needs_ocr(1, 1)
 
 
-def test_a_single_misread_is_outvoted() -> None:
+def test_settled_track_is_rechecked_periodically() -> None:
+    consensus = engine(min_agreement=1, recheck_every_n_frames=10)
+    read(consensus, 1, ["HR26DK8337"])
+    assert not consensus.needs_ocr(1, 9)
+    assert consensus.needs_ocr(1, 10)
+
+
+def test_misread_of_a_settled_plate_keeps_the_track_settled() -> None:
+    consensus = engine(min_agreement=1)
+    read(consensus, 1, ["HR26DK8337"])
+    consensus.add_reading(1, reading("HR26DK8331"), CROP, 16, 1.6)
+    assert not consensus.needs_ocr(1, 17)
+
+
+# When a vehicle is reported
+
+
+def test_vehicle_is_reported_once_it_has_been_quiet() -> None:
+    consensus = engine(min_agreement=2, report_delay_seconds=3)
+    read(consensus, 1, ["HR26DK8337", "HR26DK8337"])
+    consensus.close_track(1)
+    assert consensus.poll(2.0) == []
+    reports = consensus.poll(3.2)
+    assert plates(reports) == ["HR26DK8337"]
+    assert reports[0].record.confirmed
+    assert consensus.poll(10.0) == [], "a vehicle is reported only once"
+
+
+def test_vehicle_still_in_view_is_not_reported() -> None:
+    """The tracker lost the plate, but a new track already sees it again."""
+    consensus = engine(min_agreement=2, report_delay_seconds=1)
+    read(consensus, 1, ["HR26DK8337", "HR26DK8337"])
+    consensus.close_track(1)
+    read(consensus, 2, ["HR26DK8337"], start=0.5)
+    assert consensus.poll(5.0) == []
+    consensus.close_track(2)
+    assert plates(consensus.poll(5.0)) == ["HR26DK8337"]
+
+
+def test_flush_reports_everything_still_waiting() -> None:
+    consensus = engine(report_delay_seconds=60)
+    read(consensus, 1, ["HR26DK8337"])
+    read(consensus, 2, ["MH12AB1234"])
+    assert sorted(plates(consensus.flush())) == ["HR26DK8337", "MH12AB1234"]
+
+
+# Pooling the tracks of one vehicle
+
+
+def test_tracks_of_one_vehicle_are_pooled_into_one_report() -> None:
+    """The tracker often restarts on the same plate; each restart used to be its own row."""
     consensus = engine(min_agreement=3)
-    consensus.add_reading(1, reading("HR26DK8331"), CROP, 0, 0.0)
-    consensus.add_reading(1, reading(), CROP, 1, 0.1)
-    consensus.add_reading(1, reading(), CROP, 2, 0.2)
-    finalized = consensus.add_reading(1, reading(), CROP, 3, 0.3)
-    assert finalized is not None
-    assert finalized.record.plate == "HR26DK8337"
-    assert finalized.record.total_reads == 4
+    read(consensus, 1, ["HR26DK8337", "HR26DK8331"])
+    consensus.close_track(1)
+    read(consensus, 2, ["HR26DK8337", "HR26DK8337"], start=1.0)
+    consensus.close_track(2)
+    reports = consensus.flush()
+    assert plates(reports) == ["HR26DK8337"]
+    record = reports[0].record
+    assert (record.votes, record.total_reads, record.track_id) == (3, 4, 1)
+    assert record.confirmed
 
 
-def test_a_track_that_ends_early_still_reports_its_best_reading() -> None:
-    consensus = engine(min_agreement=5)
-    consensus.add_reading(1, reading("HR26DK8331", 0.3), CROP, 0, 0.0)
-    consensus.add_reading(1, reading(confidence=0.8), CROP, 1, 0.1)
-    finalized = consensus.close_track(1, 0.2)
-    assert finalized is not None
-    assert finalized.record.plate == "HR26DK8337"
+def test_near_identical_variants_vote_together() -> None:
+    consensus = engine(min_agreement=3)
+    read(consensus, 1, ["AP28CC6284"])
+    consensus.close_track(1)
+    read(consensus, 2, ["AP28CC4284", "AP28CC4284"], start=1.0)
+    consensus.close_track(2)
+    read(consensus, 3, ["AP28CC4284"], start=2.0)
+    assert plates(consensus.flush()) == ["AP28CC4284"]
 
 
-def test_weak_track_is_not_reported_when_it_ends() -> None:
-    consensus = engine(min_agreement=5, min_votes_on_close=2)
-    consensus.add_reading(1, reading(), CROP, 0, 0.0)
-    assert consensus.close_track(1, 0.1) is None
+def test_different_plates_are_different_vehicles() -> None:
+    consensus = engine()
+    read(consensus, 1, ["HR26DK8337"])
+    read(consensus, 2, ["MH12AB1234"])
+    assert sorted(plates(consensus.flush())) == ["HR26DK8337", "MH12AB1234"]
+
+
+def test_same_plate_after_the_window_is_a_new_sighting() -> None:
+    consensus = engine(dedupe_window_seconds=30, report_delay_seconds=1)
+    read(consensus, 1, ["HR26DK8337"])
+    consensus.close_track(1)
+    assert plates(consensus.poll(2.0)) == ["HR26DK8337"]
+    read(consensus, 2, ["HR26DK8337"], start=90.0)
+    consensus.close_track(2)
+    assert plates(consensus.poll(92.0)) == ["HR26DK8337"]
+    assert consensus.duplicates_suppressed == 0
+
+
+def test_vehicle_seen_again_after_its_report_is_a_duplicate() -> None:
+    consensus = engine(dedupe_window_seconds=30, report_delay_seconds=1)
+    read(consensus, 1, ["HR26DK8337"])
+    consensus.close_track(1)
+    assert plates(consensus.poll(2.0)) == ["HR26DK8337"]
+    read(consensus, 2, ["HR26DK8331"], start=10.0)
+    consensus.close_track(2)
+    assert consensus.poll(12.0) == []
+    assert consensus.duplicates_suppressed == 1
+
+
+def test_highest_confidence_crop_is_kept_across_tracks() -> None:
+    clear = np.ones((10, 30, 3), np.uint8)
+    consensus = engine()
+    consensus.add_reading(1, reading(confidence=0.5), CROP, 0, 0.0)
+    consensus.close_track(1)
+    consensus.add_reading(2, reading(confidence=0.9), clear, 5, 0.5)
+    assert consensus.flush()[0].crop is clear
+
+
+# Confirmation
+
+
+def test_a_single_reading_is_unconfirmed() -> None:
+    consensus = engine(min_agreement=3)
+    read(consensus, 1, ["HR26DK8337"])
+    record = consensus.flush()[0].record
+    assert record.plate == "HR26DK8337"
+    assert not record.confirmed
+
+
+def test_agreement_that_is_half_of_the_readings_is_confirmed() -> None:
+    consensus = engine(min_agreement=3)
+    read(consensus, 1, ["HR26DK8337"] * 3 + ["HR26DK8331", "HR26DK8381", "HR26DK8387"])
+    assert consensus.flush()[0].record.confirmed
+
+
+def test_agreement_outnumbered_by_rival_readings_is_unconfirmed() -> None:
+    consensus = engine(min_agreement=3)
+    read(consensus, 1, ["HR26DK8337"] * 3 + ["HR26DK8331"] * 2 + ["HR26DK8381"] * 2)
+    record = consensus.flush()[0].record
+    assert record.plate == "HR26DK8337"
+    assert not record.confirmed
+
+
+# Unread and switching vehicles
+
+
+def test_weak_vehicle_is_not_reported() -> None:
+    consensus = engine(min_votes_on_close=2)
+    read(consensus, 1, ["HR26DK8337"])
+    assert consensus.flush() == []
     assert consensus.tracks_unread == 1
 
 
 def test_track_with_no_readings_counts_as_unread() -> None:
     consensus = engine()
-    assert consensus.close_track(1, 0.0) is None
+    consensus.close_track(1)
     assert consensus.tracks_unread == 1
-
-
-def test_a_reported_track_is_not_reported_again_when_it_ends() -> None:
-    consensus = engine(min_agreement=1)
-    assert consensus.add_reading(1, reading(), CROP, 0, 0.0) is not None
-    assert consensus.close_track(1, 0.1) is None
-    assert consensus.tracks_unread == 0
-
-
-def test_reacquired_vehicle_is_a_duplicate() -> None:
-    consensus = engine(min_agreement=1, dedupe_window_seconds=30)
-    assert consensus.add_reading(1, reading(), CROP, 0, 0.0) is not None
-    assert consensus.add_reading(2, reading(), CROP, 50, 5.0) is None
-    assert consensus.duplicates_suppressed == 1
-
-
-def test_same_plate_after_the_window_is_a_new_sighting() -> None:
-    consensus = engine(min_agreement=1, dedupe_window_seconds=30)
-    assert consensus.add_reading(1, reading(), CROP, 0, 0.0) is not None
-    assert consensus.add_reading(2, reading(), CROP, 900, 90.0) is not None
-
-
-def test_highest_confidence_crop_is_kept() -> None:
-    clear = np.ones((10, 30, 3), np.uint8)
-    consensus = engine(min_agreement=2)
-    consensus.add_reading(1, reading(confidence=0.5), CROP, 0, 0.0)
-    finalized = consensus.add_reading(1, reading(confidence=0.9), clear, 1, 0.1)
-    assert finalized is not None
-    assert finalized.crop is clear
-
-
-def test_settled_track_is_rechecked_periodically() -> None:
-    consensus = engine(min_agreement=1, recheck_every_n_frames=10)
-    consensus.add_reading(1, reading(), CROP, 0, 0.0)
-    assert not consensus.needs_ocr(1, 9)
-    assert consensus.needs_ocr(1, 10)
 
 
 def test_track_that_moved_onto_another_vehicle_reports_both() -> None:
     """A settled track that inherits the next vehicle used to lose that plate."""
     consensus = engine(min_agreement=2)
-    consensus.add_reading(1, reading("HR26DK8337"), CROP, 0, 0.0)
-    assert consensus.add_reading(1, reading("HR26DK8337"), CROP, 1, 0.1) is not None
-
-    assert consensus.add_reading(1, reading("MH12AB1234"), CROP, 16, 1.6) is None
-    assert consensus.needs_ocr(1, 17)  # Reading at full rate again
-    finalized = consensus.add_reading(1, reading("MH12AB1234"), CROP, 17, 1.7)
-    assert finalized is not None
-    assert finalized.record.plate == "MH12AB1234"
-
-
-def test_new_vehicle_is_reported_if_its_track_ends_before_agreement() -> None:
-    consensus = engine(min_agreement=3)
-    for frame in range(3):
-        consensus.add_reading(1, reading("HR26DK8337"), CROP, frame, 0.0)
+    read(consensus, 1, ["HR26DK8337", "HR26DK8337"])
     consensus.add_reading(1, reading("MH12AB1234"), CROP, 16, 1.6)
-    finalized = consensus.close_track(1, 1.7)
-    assert finalized is not None
-    assert finalized.record.plate == "MH12AB1234"
-
-
-def test_misread_of_a_reported_plate_is_not_a_new_vehicle() -> None:
-    consensus = engine(min_agreement=1)
-    consensus.add_reading(1, reading("HR26DK8337"), CROP, 0, 0.0)
-    assert consensus.add_reading(1, reading("HR26DK8331"), CROP, 16, 1.6) is None
-    assert not consensus.needs_ocr(1, 17)
-
-
-def test_a_wild_misread_cannot_report_the_settled_plate_twice() -> None:
-    consensus = engine(min_agreement=2)
-    consensus.add_reading(1, reading("HR26DK8337"), CROP, 0, 0.0)
-    assert consensus.add_reading(1, reading("HR26DK8337"), CROP, 1, 0.1) is not None
-    consensus.add_reading(1, reading("MH12AB1234"), CROP, 16, 1.6)
-    consensus.add_reading(1, reading("HR26DK8337"), CROP, 32, 3.2)
-    assert consensus.add_reading(1, reading("HR26DK8337"), CROP, 33, 3.3) is None
-    assert consensus.duplicates_suppressed == 1
+    assert consensus.needs_ocr(1, 17), "reading at full rate again"
+    consensus.add_reading(1, reading("MH12AB1234"), CROP, 17, 1.7)
+    assert plates(consensus.flush()) == ["HR26DK8337", "MH12AB1234"]

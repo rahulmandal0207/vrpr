@@ -70,7 +70,7 @@ Each run writes to its own folder, `output/<run id>/`:
 
 | File | Contents |
 | --- | --- |
-| `plates.csv`, `plates.jsonl` | One record per vehicle, written as it is found |
+| `plates.csv`, `plates.jsonl` | One record per vehicle, written a few seconds after it leaves the picture. `confirmed` is false when too few readings agreed, so the plate is a best guess |
 | `crops/` | The clearest image of each plate |
 | `summary.json` | Frames, speed, OCR calls, plates found and tracks left unread |
 | `annotated.mp4` | The video with boxes drawn, with `--save-video` |
