@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from vrpr.config import DetectorConfig
+from vrpr.cpu import limit_torch_threads
 from vrpr.exceptions import DependencyError, ModelError
 from vrpr.models import BoundingBox, Detection, Frame
 
@@ -34,6 +35,7 @@ class YoloDetector:
             )
         self._config = config
         self._model = load_yolo(config.weights)
+        self._threads_checked = False
 
     def detect(self, frame: Frame) -> list[Detection]:
         results = self._model.predict(
@@ -43,6 +45,13 @@ class YoloDetector:
             device=self._config.device,
             verbose=False,
         )
+        if not self._threads_checked:
+            # Ultralytics picks its CPU thread count on the first prediction, from the machine's
+            # cores rather than the ones this process may use. OCR shares the same threads.
+            self._threads_checked = True
+            device = getattr(getattr(self._model, "predictor", None), "device", None)
+            if getattr(device, "type", None) == "cpu":
+                limit_torch_threads()
         detections = []
         for result in results:
             for box in result.boxes:

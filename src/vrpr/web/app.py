@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import tempfile
 import threading
+import time
 from dataclasses import replace
 from pathlib import Path
 
@@ -39,6 +40,9 @@ PREVIEW_INTERVAL_SECONDS = 0.1
 PUBLIC_MAX_SECONDS = 15
 PUBLIC_MAX_UPLOAD_MB = 50
 PUBLIC_SESSION_HOURS = 2
+# OCR is the slowest stage on a CPU. Reading every second frame needed 35-48% fewer reads and got
+# the same plates right on two clips with answer keys. The detector still sees every frame.
+PUBLIC_OCR_EVERY_N_FRAMES = 2
 SOURCE_CODE_URL = "https://github.com/rahulmandal0207/vrpr"
 
 PUBLIC = runs.public_demo()
@@ -115,7 +119,11 @@ def settings_sidebar(base: AppConfig) -> AppConfig:
         detector=replace(
             base.detector, weights=Path(weights), confidence=confidence, device=DEVICES.get(device)
         ),
-        ocr=replace(base.ocr, gpu=ocr_gpu),
+        ocr=replace(
+            base.ocr,
+            gpu=ocr_gpu,
+            every_n_frames=PUBLIC_OCR_EVERY_N_FRAMES if PUBLIC else base.ocr.every_n_frames,
+        ),
         consensus=replace(base.consensus, min_agreement=int(agreement)),
         output=replace(output, save_annotated_video=save_video),
     )
@@ -166,8 +174,11 @@ def run_pipeline(config: AppConfig, source: str) -> None:
     if limit is not None and total:
         total = min(total, limit.max_frames)
     preview = st.empty()
+    started: list[float] = []
 
     def update(frame: Frame, frames: int) -> None:
+        if not started:
+            started.append(time.monotonic())
         preview.image(
             runs.preview_jpeg(frame, PREVIEW_WIDTH),
             output_format="JPEG",
@@ -176,10 +187,9 @@ def run_pipeline(config: AppConfig, source: str) -> None:
         )
         # The header count is an estimate, and can be wrong for files still being downloaded,
         # so past it the bar holds just short of full and only the frame number is shown.
-        if total and frames <= total:
-            progress.progress(frames / total, text=f"Frame {frames} of {total}")
-        else:
-            progress.progress(0.99 if total else 0.0, text=f"Frame {frames}")
+        text = runs.progress_text(frames, total, time.monotonic() - started[0])
+        value = frames / total if total and frames <= total else (0.99 if total else 0.0)
+        progress.progress(value, text=text)
 
     observers: list[FrameObserver] = [runs.ThrottledObserver(update, PREVIEW_INTERVAL_SECONDS)]
     if limit is not None:

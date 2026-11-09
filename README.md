@@ -109,7 +109,10 @@ whenever the chosen branch on GitHub changes.
 
 - offers only the bundled sample in `samples/` and uploads up to 50 MB, with no cameras, streams
   or server folders
-- analyses the first 15 seconds of each video, on the CPU, one run at a time
+- analyses the first 15 seconds of each video, on the CPU, one run at a time, reading plates on
+  every second frame because OCR is the slowest stage on a CPU
+- shows the speed and time left while it works, since a small shared CPU analyses video more
+  slowly than it plays
 - keeps each visitor's uploads and results in a private temporary folder, deleted after about
   2 hours
 - hides the model, device and save-video settings, and links back to this source code, which the
@@ -126,6 +129,10 @@ The first build installs PyTorch, Ultralytics and EasyOCR and takes several minu
 the branch redeploy automatically. The host gives about 2.7 GB of memory, and a run peaks at about
 1.2 GB. An app with no visitors for a while goes to sleep, and the next visitor wakes it, which
 takes a minute.
+
+The host caps CPU time at a fraction of a core to 2 cores, but reports every core of the machine.
+VRPR sizes PyTorch's threads to the cap, read from the container's cgroup settings, because
+extra threads spend the allowance waiting on each other.
 
 `requirements.txt` and `packages.txt` exist only for the host: install locally with `pip` and
 `pyproject.toml` as above. The trained model is committed as `models/best.pt` so the host can load
