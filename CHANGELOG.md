@@ -19,6 +19,8 @@ differ from before: see the README.
 - JSON Lines output, a run summary, an optional annotated video and JSON logs.
 - A `.env` file in the working folder is read on start, for settings such as `ROBOFLOW_API_KEY`.
 - A browser interface, `vrpr web`, with a live preview, plate gallery and past runs.
+- A public demo mode for Streamlit Community Cloud, started by `streamlit_app.py`, with a CC0
+  sample clip, private per-visitor sessions, a 50 MB upload limit and a 15-second cap.
 - Tests, type checks, linting, CI, a Dockerfile and documentation.
 
 ### Fixed

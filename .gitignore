@@ -1,14 +1,19 @@
 # Models, data and run results are too large or too sensitive for git
 *.pt
-/models/
+/models/*
 /data/
 /output/
 /runs/
 *.mp4
 *.avi
 
+# Kept for the public demo: the trained plate detector and a short openly licensed sample
+!/models/best.pt
+!/samples/*.mp4
+
 # Secrets
 .env
+.streamlit/secrets.toml
 
 # Python
 __pycache__/

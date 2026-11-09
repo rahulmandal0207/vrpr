@@ -1,0 +1,14 @@
+# Dependencies for hosting the public demo (streamlit_app.py), for example on Streamlit
+# Community Cloud. For development, install from pyproject.toml instead: pip install -e ".[ml,web]"
+
+# CPU-only PyTorch: hosting has no GPU, and the CUDA build is several gigabytes larger.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch
+torchvision
+
+ultralytics>=8.3.50,<9
+easyocr>=1.7.2,<2
+streamlit>=1.57,<2
+numpy>=1.26
+opencv-python-headless>=4.10
+PyYAML>=6.0

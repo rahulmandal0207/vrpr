@@ -1,0 +1,9 @@
+# Applies to `vrpr web` and to hosting. `vrpr web` overrides the upload size on its command line.
+[browser]
+gatherUsageStats = false
+
+[client]
+toolbarMode = "minimal"
+
+[server]
+maxUploadSize = 50
