@@ -22,6 +22,9 @@ DEVICES = {"Automatic": None, "GPU": "0", "CPU": "cpu"}
 SOURCES = ("Video in data/videos", "Upload a video", "Camera or stream")
 LAST_RUN = "last_run"
 CARDS_PER_ROW = 4
+# The preview is display only: the pipeline always analyses full-size frames.
+PREVIEW_WIDTH = 960
+PREVIEW_INTERVAL_SECONDS = 0.1
 
 
 @st.cache_resource(show_spinner="Loading the plate detector...")
@@ -108,7 +111,12 @@ def run_pipeline(config: AppConfig, source: str) -> None:
     preview = st.empty()
 
     def update(frame: Frame, frames: int) -> None:
-        preview.image(frame, channels="BGR", width="stretch")
+        preview.image(
+            runs.preview_jpeg(frame, PREVIEW_WIDTH),
+            output_format="JPEG",
+            width="stretch",
+            alt="Live preview of the video being analysed, with detected plates boxed",
+        )
         # The header count is an estimate, and can be wrong for files still being downloaded,
         # so past it the bar holds just short of full and only the frame number is shown.
         if total and frames <= total:
@@ -131,7 +139,7 @@ def run_pipeline(config: AppConfig, source: str) -> None:
             source,
             detector=detector,
             ocr=ocr,
-            observers=[runs.ThrottledObserver(update)],
+            observers=[runs.ThrottledObserver(update, PREVIEW_INTERVAL_SECONDS)],
         )
     except VrprError as exc:
         progress.empty()
@@ -158,10 +166,13 @@ def show_plate_cards(results: runs.RunResults) -> None:
             columns, results.plates[start : start + CARDS_PER_ROW], strict=False
         ):
             with column.container(border=True):
+                plate = row.get("plate", "?")
                 image = crop_file(results, row.get("crop_path", ""))
                 if image is not None:
-                    st.image(str(image), width="stretch")
-                st.markdown(f"#### {row.get('plate', '?')}")
+                    st.image(str(image), width="stretch", alt=f"Number plate read as {plate}")
+                st.markdown(f"#### {plate}")
+                if runs.is_unconfirmed(row):
+                    st.badge("Unconfirmed", icon=":material/help:", color="orange")
                 st.caption(
                     f"Confidence {float(row.get('confidence') or 0):.2f} · "
                     f"{row.get('votes', '?')} of {row.get('total_reads', '?')} readings agree · "
@@ -182,6 +193,12 @@ def show_results(run_dir: Path, place: str) -> None:
     columns[1].metric("Frames", summary.get("frames", "-"))
     columns[2].metric("Frames per second", summary.get("frames_per_second", "-"))
     columns[3].metric("Vehicles not read", summary.get("tracks_unread", "-"))
+    unconfirmed = sum(runs.is_unconfirmed(row) for row in results.plates)
+    if unconfirmed:
+        st.caption(
+            f"{unconfirmed} of these plates are unconfirmed: too few readings agreed, "
+            "so treat them as best guesses."
+        )
 
     if not results.plates:
         st.info("No plates were found in this run.")

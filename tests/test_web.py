@@ -5,6 +5,7 @@ import json
 import subprocess
 from pathlib import Path
 
+import cv2 as cv
 import numpy as np
 import pytest
 
@@ -30,13 +31,22 @@ def test_list_videos_of_a_missing_folder(tmp_path: Path) -> None:
     assert runs.list_videos(tmp_path / "missing") == []
 
 
-def write_run(output: Path, run_id: str, plates: list[str], summary: bool = True) -> Path:
+def write_run(
+    output: Path,
+    run_id: str,
+    plates: list[str],
+    summary: bool = True,
+    unconfirmed: frozenset[str] = frozenset(),
+) -> Path:
     run_dir = output / run_id
     run_dir.mkdir(parents=True)
     with (run_dir / "plates.csv").open("w", newline="", encoding="utf-8") as file:
-        writer = csv.DictWriter(file, fieldnames=["plate", "confidence"])
+        writer = csv.DictWriter(file, fieldnames=["plate", "confidence", "confirmed"])
         writer.writeheader()
-        writer.writerows({"plate": plate, "confidence": "0.9"} for plate in plates)
+        writer.writerows(
+            {"plate": plate, "confidence": "0.9", "confirmed": str(plate not in unconfirmed)}
+            for plate in plates
+        )
     if summary:
         (run_dir / "summary.json").write_text(json.dumps({"frames": 10}), encoding="utf-8")
     return run_dir
@@ -102,6 +112,24 @@ def test_frame_count_of_a_file(make_video) -> None:
 @pytest.mark.parametrize("source", ["0", "rtsp://camera/stream", "missing.mp4"])
 def test_frame_count_unknown_for_live_or_missing_sources(source: str) -> None:
     assert runs.frame_count(source) is None
+
+
+def test_preview_is_shrunk_to_width_and_keeps_its_shape() -> None:
+    frame = np.full((1080, 1920, 3), 120, np.uint8)
+    data = runs.preview_jpeg(frame, 960)
+    assert data[:2] == b"\xff\xd8", "should be a JPEG"
+    decoded = cv.imdecode(np.frombuffer(data, np.uint8), cv.IMREAD_COLOR)
+    assert decoded.shape == (540, 960, 3)
+
+
+def test_small_preview_is_not_enlarged_and_frame_is_untouched() -> None:
+    frame = np.zeros((240, 320, 3), np.uint8)
+    frame[10:20, 10:20] = (0, 0, 255)
+    before = frame.copy()
+    decoded = cv.imdecode(np.frombuffer(runs.preview_jpeg(frame, 960), np.uint8), cv.IMREAD_COLOR)
+    assert decoded.shape == (240, 320, 3)
+    assert np.array_equal(frame, before), "the analysed frame must not change"
+    assert decoded[15, 15, 2] > 200, "colours stay in OpenCV's BGR order"
 
 
 def test_throttled_observer_reports_first_frame_then_waits() -> None:
@@ -253,6 +281,31 @@ def test_page_shows_missing_weights_as_a_message(app_test, make_video, monkeypat
     app_test.button(key="run").click().run()
     assert not app_test.exception
     assert any("weights not found" in error.value for error in app_test.error)
+
+
+@pytest.mark.parametrize(
+    ("value", "flagged"), [("False", True), ("false", True), ("True", False), ("", False)]
+)
+def test_is_unconfirmed(value: str, flagged: bool) -> None:
+    assert runs.is_unconfirmed({"confirmed": value}) is flagged
+
+
+def test_runs_from_before_the_confirmed_column_are_not_flagged() -> None:
+    assert not runs.is_unconfirmed({"plate": "HR26DK8337"})
+
+
+def test_page_marks_unconfirmed_plates(app_test) -> None:
+    write_run(
+        Path("output"),
+        "20261108T100000Z-aaaaaa",
+        ["MH12AB1234", "HR26DK8337"],
+        unconfirmed=frozenset({"HR26DK8337"}),
+    )
+    app_test.run()
+    assert not app_test.exception
+    badges = [element for element in app_test.markdown if "Unconfirmed" in element.value]
+    assert len(badges) == 1
+    assert any("1 of these plates are unconfirmed" in caption.value for caption in app_test.caption)
 
 
 def test_page_shows_past_runs(app_test) -> None:

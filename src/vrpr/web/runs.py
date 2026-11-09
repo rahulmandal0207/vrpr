@@ -34,6 +34,14 @@ class RunResults:
         return self.summary is not None
 
 
+def is_unconfirmed(row: dict[str, str]) -> bool:
+    """True for a plate reported without enough agreeing readings.
+
+    Runs from before the confirmed column existed have no value, and are not flagged.
+    """
+    return row.get("confirmed", "").strip().lower() == "false"
+
+
 def list_videos(folder: Path) -> list[Path]:
     """Return the video files directly inside a folder, sorted by name."""
     if not folder.is_dir():
@@ -90,6 +98,22 @@ def save_upload(name: str, data: bytes, folder: Path) -> Path:
         counter += 1
     path.write_bytes(data)
     return path
+
+
+def preview_jpeg(frame: Frame, max_width: int, quality: int = 80) -> bytes:
+    """Shrink a frame for the live preview and compress it as JPEG.
+
+    Only the picture shown on the page changes: the pipeline has already analysed the
+    full-size frame. Smaller previews are cheap enough to send several times a second.
+    """
+    height, width = frame.shape[:2]
+    if width > max_width:
+        size = (max_width, round(height * max_width / width))
+        frame = cv.resize(frame, size, interpolation=cv.INTER_AREA)  # type: ignore[assignment]
+    encoded, data = cv.imencode(".jpg", frame, [cv.IMWRITE_JPEG_QUALITY, quality])
+    if not encoded:
+        raise ValueError("Could not encode the preview frame")
+    return bytes(data.tobytes())
 
 
 def frame_count(source: str) -> int | None:
