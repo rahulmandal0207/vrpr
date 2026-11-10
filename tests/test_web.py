@@ -4,6 +4,7 @@ import csv
 import json
 import subprocess
 from pathlib import Path
+from typing import ClassVar
 
 import cv2 as cv
 import numpy as np
@@ -202,18 +203,33 @@ def test_web_command_needs_an_existing_folder(tmp_path: Path, monkeypatch) -> No
 
 
 class FakeYolo:
+    # The settings each prediction used, newest last, so tests can check what the page sent.
+    used: ClassVar[list] = []
+
     def __init__(self, config) -> None:
         self.config = config
 
+    def with_settings(self, config) -> "FakeYolo":
+        return FakeYolo(config)
+
     def detect(self, frame) -> list[Detection]:
+        FakeYolo.used.append(self.config)
         return [Detection(BoundingBox(40, 100, 200, 140), 0.9)]
 
 
 class FakeEasyOcr:
+    used: ClassVar[list] = []
+    images: ClassVar[list] = []
+
     def __init__(self, config) -> None:
-        pass
+        self.config = config
+
+    def with_settings(self, config) -> "FakeEasyOcr":
+        return FakeEasyOcr(config)
 
     def read(self, image) -> list[OcrFragment]:
+        FakeEasyOcr.used.append(self.config)
+        FakeEasyOcr.images.append(image)
         return [OcrFragment("HR26DK8337", 0.95, BoundingBox(0, 0, 100, 30))]
 
 
@@ -232,7 +248,11 @@ def app_test(monkeypatch):
 
     monkeypatch.setattr(vrpr.detector, "YoloDetector", FakeYolo)
     monkeypatch.setattr(vrpr.ocr, "EasyOcrEngine", FakeEasyOcr)
+    monkeypatch.setattr(FakeYolo, "used", [])
+    monkeypatch.setattr(FakeEasyOcr, "used", [])
+    monkeypatch.setattr(FakeEasyOcr, "images", [])
     st.cache_resource.clear()
+    st.cache_data.clear()
     return testing.AppTest.from_file(str(APP), default_timeout=60)
 
 
@@ -281,6 +301,82 @@ def test_page_shows_missing_weights_as_a_message(app_test, make_video, monkeypat
     app_test.button(key="run").click().run()
     assert not app_test.exception
     assert any("weights not found" in error.value for error in app_test.error)
+
+
+# Advanced options and trying them on one frame
+
+
+def add_clip(make_video, frames: int = 8) -> None:
+    videos = Path("data/videos")
+    videos.mkdir(parents=True)
+    make_video(frames).replace(videos / "clip.mp4")
+    Path("models").mkdir()
+    Path("models/best.pt").write_bytes(b"fake")
+
+
+def test_advanced_options_reach_the_models(app_test, make_video) -> None:
+    add_clip(make_video)
+    app_test.run()
+    app_test.select_slider(key="adv_image_size").set_value(960)
+    app_test.slider(key="adv_iou").set_value(0.5)
+    app_test.segmented_control(key="adv_decoder").set_value("beamsearch").run()
+    app_test.slider(key="adv_beam_width").set_value(10)
+    app_test.toggle(key="adv_invert").set_value(True)
+    app_test.button(key="run").click().run()
+
+    assert not app_test.exception, app_test.exception
+    detector, reader = FakeYolo.used[-1], FakeEasyOcr.used[-1]
+    assert (detector.image_size, detector.iou) == (960, 0.5)
+    assert (reader.decoder, reader.beam_width) == ("beamsearch", 10)
+    # The test video is light gray, so the inverted plate image is dark.
+    assert FakeEasyOcr.images[-1].max() < 100
+
+
+def test_reset_returns_the_advanced_options_to_the_defaults(app_test) -> None:
+    app_test.run()
+    assert app_test.button(key="advanced_reset").disabled
+    app_test.slider(key="adv_gamma").set_value(2.0).run()
+    assert any("1 advanced setting changed" in caption.value for caption in app_test.caption)
+    assert not app_test.button(key="advanced_reset").disabled
+
+    app_test.button(key="advanced_reset").click().run()
+    assert app_test.slider(key="adv_gamma").value == 1.0
+    assert app_test.button(key="advanced_reset").disabled
+
+
+def test_trying_settings_on_one_frame(app_test, make_video) -> None:
+    add_clip(make_video)
+    app_test.session_state["tune"] = True  # open the expander
+    app_test.run()
+
+    assert not app_test.exception, app_test.exception
+    assert plates_shown(app_test) == ["HR26DK8337"]
+    assert any("EasyOCR read" in caption.value for caption in app_test.caption)
+    frame = next(slider for slider in app_test.slider if slider.label == "Frame")
+    assert (frame.min, frame.max) == (0, 7)
+    reads = len(FakeEasyOcr.used)
+
+    # Moving to another frame, or changing a filter, reads the plate again.
+    frame.set_value(5).run()
+    assert len(FakeEasyOcr.used) == reads + 1
+    plain = FakeEasyOcr.images[-1]
+    app_test.toggle(key="adv_invert").set_value(True).run()
+    assert np.array_equal(FakeEasyOcr.images[-1], 255 - plain)
+    assert not Path("output").exists()  # trying settings saves nothing
+
+
+def test_trying_settings_needs_a_video_file(app_test) -> None:
+    app_test.session_state["tune"] = True
+    app_test.run()
+    assert any("Choose a video above first" in info.value for info in app_test.info)
+    app_test.radio(key="source_mode").set_value("Camera or stream").run()
+    assert any("works on video files" in info.value for info in app_test.info)
+
+
+def test_the_tuning_view_does_nothing_while_closed(app_test, make_video) -> None:
+    add_clip(make_video)
+    app_test.run()
+    assert not FakeEasyOcr.used
 
 
 @pytest.mark.parametrize(

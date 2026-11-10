@@ -4,6 +4,8 @@ detector:
   confidence: 0.4      # discard weaker detections
   image_size: 640
   device: null         # null chooses automatically; or "cpu", "0"
+  iou: 0.7             # boxes overlapping more than this are merged into the stronger one
+  augment: false       # test-time augmentation: also detect on flipped and rescaled copies, ~3x slower
 
 ocr:
   languages: [en]
@@ -13,6 +15,28 @@ ocr:
                        # but a single frame is often misread, so more readings vote
   crop_padding: 0.05   # share of the box added on each side; more padding read worse
   min_crop_height: 128 # smaller crops are upscaled before OCR; 128 read better than 64
+  # EasyOCR readtext settings. These are EasyOCR's own defaults.
+  decoder: greedy      # or beamsearch, which weighs several candidate readings; slower
+  beam_width: 5        # candidates kept by beamsearch
+  text_threshold: 0.7  # how sure the text finder must be that a region is text
+  low_text: 0.4        # lower includes fainter character edges
+  link_threshold: 0.4  # lower joins characters into one word more readily
+  contrast_ths: 0.1    # text read with less confidence than this is read again with more contrast
+  adjust_contrast: 0.5 # contrast used for that second reading
+  mag_ratio: 1.0       # enlarges the image inside the text finder; above 1 helps small text
+  min_size: 20         # text regions smaller than this, in pixels, are ignored
+  rotation_info: []    # also read the text turned by these angles: any of 90, 180, 270
+
+preprocess:            # OpenCV filters for each plate crop, applied in this order before OCR
+  grayscale: true      # thresholding always works in gray
+  denoise: none        # none, bilateral (keeps edges) or median (removes speckles)
+  gamma: 1.0           # above 1 brightens dark plates, below 1 darkens washed-out ones
+  contrast: none       # none, clahe (evens out shadows and glare) or equalize
+  clahe_clip_limit: 2.0
+  sharpen: 0.0         # unsharp mask strength, 0 to 5; 0 is off
+  threshold: none      # none, otsu or adaptive: turns the plate black and white
+  adaptive_block_size: 31  # odd; should be larger than a character's stroke width
+  invert: false        # for light text on dark plates
 
 tracker:
   max_age: 5           # frames a plate may go undetected before its track ends;

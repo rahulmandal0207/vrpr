@@ -313,6 +313,23 @@ def test_yolo_detector_converts_results(tmp_path: Path, monkeypatch) -> None:
     assert detection.confidence == 0.75
     assert calls.predict["conf"] == 0.5
     assert calls.predict["verbose"] is False
+    assert calls.predict["iou"] == 0.7
+    assert calls.predict["augment"] is False
+
+
+def test_yolo_settings_change_without_reloading_the_model(tmp_path: Path, monkeypatch) -> None:
+    calls = install_fake_yolo(monkeypatch)
+    weights = tmp_path / "best.pt"
+    weights.touch()
+    detector = YoloDetector(DetectorConfig(weights=weights))
+    tuned = detector.with_settings(
+        DetectorConfig(weights=weights, confidence=0.2, image_size=960, iou=0.5, augment=True)
+    )
+    assert tuned._model is detector._model
+    tuned.detect(np.zeros((4, 4, 3), np.uint8))
+    assert (calls.predict["conf"], calls.predict["imgsz"]) == (0.2, 960)
+    assert (calls.predict["iou"], calls.predict["augment"]) == (0.5, True)
+    assert detector.config.image_size == 640
 
 
 def test_missing_weights_explain_what_to_do(tmp_path: Path) -> None:
@@ -333,13 +350,53 @@ def test_easyocr_engine_converts_results(monkeypatch) -> None:
         def __init__(self, languages: list, gpu: bool) -> None:
             self.gpu = gpu
 
-        def readtext(self, image, allowlist: str):
+        def readtext(self, image, **options):
+            self.options = options
             return [([[0, 1], [10, 1], [10, 5], [0, 5]], "HR26", 0.8)]
 
     monkeypatch.setitem(sys.modules, "easyocr", types.SimpleNamespace(Reader=FakeReader))
-    fragment = EasyOcrEngine(OcrConfig(gpu=False)).read(np.zeros((4, 4), np.uint8))[0]
+    engine = EasyOcrEngine(OcrConfig(gpu=False))
+    fragment = engine.read(np.zeros((4, 4), np.uint8))[0]
     assert fragment.text == "HR26"
     assert fragment.box == BoundingBox(0, 1, 10, 5)
+    # EasyOCR's own defaults, so results match versions without these settings.
+    assert engine._reader.options == {
+        "allowlist": "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
+        "decoder": "greedy",
+        "beamWidth": 5,
+        "text_threshold": 0.7,
+        "low_text": 0.4,
+        "link_threshold": 0.4,
+        "contrast_ths": 0.1,
+        "adjust_contrast": 0.5,
+        "mag_ratio": 1.0,
+        "min_size": 20,
+        "rotation_info": None,
+    }
+
+
+def test_easyocr_settings_change_without_reloading_the_reader(monkeypatch) -> None:
+    class FakeReader:
+        created = 0
+
+        def __init__(self, languages: list, gpu: bool) -> None:
+            FakeReader.created += 1
+
+        def readtext(self, image, **options):
+            self.options = options
+            return []
+
+    monkeypatch.setitem(sys.modules, "easyocr", types.SimpleNamespace(Reader=FakeReader))
+    engine = EasyOcrEngine(OcrConfig(gpu=False))
+    tuned = engine.with_settings(
+        OcrConfig(gpu=False, decoder="beamsearch", beam_width=8, rotation_info=(180, 90))
+    )
+    tuned.read(np.zeros((4, 4), np.uint8))
+    assert FakeReader.created == 1
+    assert tuned._reader.options["decoder"] == "beamsearch"
+    assert tuned._reader.options["beamWidth"] == 8
+    assert tuned._reader.options["rotation_info"] == [180, 90]
+    assert engine.config.decoder == "greedy"  # the original is unchanged
 
 
 def test_easyocr_failures_become_ocr_errors(monkeypatch) -> None:
@@ -347,7 +404,7 @@ def test_easyocr_failures_become_ocr_errors(monkeypatch) -> None:
         def __init__(self, languages: list, gpu: bool) -> None:
             pass
 
-        def readtext(self, image, allowlist: str):
+        def readtext(self, image, **options):
             raise ValueError("bad image")
 
     monkeypatch.setitem(sys.modules, "easyocr", types.SimpleNamespace(Reader=FailingReader))

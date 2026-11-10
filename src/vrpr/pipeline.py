@@ -132,7 +132,9 @@ class Pipeline:
 
         self._ocr_calls += 1
         try:
-            fragments = self._ocr.read(prepare_for_ocr(crop, settings.min_crop_height))
+            fragments = self._ocr.read(
+                prepare_for_ocr(crop, settings.min_crop_height, self._config.preprocess)
+            )
         except OcrError as exc:
             self._ocr_errors += 1
             logger.warning("OCR failed on track %d: %s", track.track_id, exc)

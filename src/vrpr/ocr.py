@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Protocol
+import copy
+from typing import Any, Protocol
 
 from vrpr.config import OcrConfig
 from vrpr.exceptions import DependencyError, OcrError
@@ -23,11 +24,41 @@ class EasyOcrEngine:
             raise DependencyError(
                 "EasyOCR needs the ML dependencies. Install them with: pip install -e .[ml]"
             ) from exc
+        self._config = config
         self._reader = easyocr.Reader(list(config.languages), gpu=config.gpu)
+
+    @property
+    def config(self) -> OcrConfig:
+        return self._config
+
+    def with_settings(self, config: OcrConfig) -> EasyOcrEngine:
+        """Return an engine that shares this one's loaded reader but reads with ``config``.
+
+        Languages and GPU use are the reader's own, so only reading settings change.
+        """
+        other = copy.copy(self)
+        other._config = config
+        return other
+
+    def readtext_options(self) -> dict[str, Any]:
+        settings = self._config
+        return {
+            "allowlist": _PLATE_CHARACTERS,
+            "decoder": settings.decoder,
+            "beamWidth": settings.beam_width,
+            "text_threshold": settings.text_threshold,
+            "low_text": settings.low_text,
+            "link_threshold": settings.link_threshold,
+            "contrast_ths": settings.contrast_ths,
+            "adjust_contrast": settings.adjust_contrast,
+            "mag_ratio": settings.mag_ratio,
+            "min_size": settings.min_size,
+            "rotation_info": list(settings.rotation_info) or None,
+        }
 
     def read(self, image: Frame) -> list[OcrFragment]:
         try:
-            raw = self._reader.readtext(image, allowlist=_PLATE_CHARACTERS)
+            raw = self._reader.readtext(image, **self.readtext_options())
         except Exception as exc:  # EasyOCR raises many internal types; one crop must not end a run.
             raise OcrError(f"EasyOCR failed: {exc}") from exc
 
