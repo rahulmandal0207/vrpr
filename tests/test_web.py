@@ -393,13 +393,63 @@ def public_page(app_test, monkeypatch, tmp_path: Path, make_video):
     return app_test
 
 
-def test_public_page_offers_only_safe_sources_and_settings(public_page) -> None:
+PUBLIC_SOURCE_OPTIONS = [
+    "Sample video",
+    "Upload a video",
+    "Video in data/videos",
+    "Camera or stream",
+]
+
+
+def test_public_page_shows_local_controls_greyed_out(public_page) -> None:
     public_page.run()
     assert not public_page.exception
-    assert public_page.radio(key="source_mode").options == ["Sample video", "Upload a video"]
-    keys = {widget.key for widget in public_page.text_input}
-    assert "weights" not in keys and "stream" not in keys, "no file paths or stream URLs"
+    assert public_page.radio(key="source_mode").options == PUBLIC_SOURCE_OPTIONS
+    for widget in (
+        public_page.text_input(key="weights"),
+        public_page.selectbox(key="device"),
+        public_page.checkbox(key="ocr_gpu"),
+        public_page.checkbox(key="save_video"),
+    ):
+        assert widget.disabled, widget.label
+        assert widget.help and "Clone VRPR" in widget.help, widget.label
+    assert public_page.selectbox(key="device").value == "CPU"
+    assert not public_page.slider(key="confidence").disabled, "demo settings stay usable"
     assert any("personal data" in caption.value for caption in public_page.caption)
+
+
+@pytest.mark.parametrize("source", ["Video in data/videos", "Camera or stream"])
+def test_public_local_sources_are_shown_but_cannot_run(public_page, source: str) -> None:
+    public_page.run()
+    public_page.radio(key="source_mode").set_value(source).run()
+    assert not public_page.exception
+    locked = [*public_page.selectbox, *public_page.text_input]
+    assert any(widget.disabled and "Clone VRPR" in (widget.help or "") for widget in locked)
+    assert public_page.button(key="run").disabled
+
+
+def test_public_page_ignores_local_settings_sent_anyway(public_page) -> None:
+    # Disabled widgets stop people in the browser, not a client that sends values directly.
+    public_page.run()
+    public_page.session_state["weights"] = "C:/secret/other.pt"
+    public_page.session_state["save_video"] = True
+    public_page.session_state["device"] = "GPU"
+    public_page.button(key="run").click().run()
+    assert not public_page.exception
+    assert not public_page.error, [error.value for error in public_page.error]
+    assert plates_shown(public_page)
+
+
+def test_public_page_shows_the_demo_notice_once(public_page) -> None:
+    public_page.run()
+    assert not public_page.exception
+    notice = [md.value for md in public_page.markdown if "This page is a demo" in md.value]
+    assert notice, "the pop-up opens on the first visit"
+    assert any("git clone" in code.value for code in public_page.code)
+    public_page.button(key="close_notice").click().run()
+    assert not any("This page is a demo" in md.value for md in public_page.markdown)
+    public_page.run()
+    assert not any("This page is a demo" in md.value for md in public_page.markdown)
 
 
 def test_public_runs_are_private_to_each_session(public_page) -> None:
@@ -434,4 +484,4 @@ def test_entry_point_serves_the_public_page(app_test, monkeypatch, tmp_path: Pat
     page = AppTest.from_file(str(ENTRY_POINT), default_timeout=60)
     page.run()
     assert not page.exception
-    assert page.radio(key="source_mode").options == ["Sample video", "Upload a video"]
+    assert page.radio(key="source_mode").options == PUBLIC_SOURCE_OPTIONS

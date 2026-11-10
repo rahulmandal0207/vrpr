@@ -107,16 +107,18 @@ whenever the chosen branch on GitHub changes.
 
 `streamlit_app.py` starts the same page in public mode. Public mode:
 
-- offers only the bundled sample in `samples/` and uploads up to 50 MB, with no cameras, streams
-  or server folders
+- opens with a pop-up saying it is a demo on a server without a GPU, with the command to clone
+  the repository and run it properly
+- runs only the bundled sample in `samples/` and uploads up to 50 MB. Local folders, cameras,
+  streams, the model, the device and the annotated video are shown greyed out, and hovering
+  their **?** says to clone the repository to use them
 - analyses the first 15 seconds of each video, on the CPU, one run at a time, reading plates on
   every second frame because OCR is the slowest stage on a CPU
 - shows the speed and time left while it works, since a small shared CPU analyses video more
   slowly than it plays
 - keeps each visitor's uploads and results in a private temporary folder, deleted after about
   2 hours
-- hides the model, device and save-video settings, and links back to this source code, which the
-  AGPL-3.0 dependencies require
+- links back to this source code, which the AGPL-3.0 dependencies require
 
 To publish it:
 

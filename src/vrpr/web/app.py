@@ -11,6 +11,7 @@ import threading
 import time
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 import streamlit as st
 
@@ -29,7 +30,10 @@ UPLOAD_DIR = Path("data/uploads")
 SAMPLE_DIR = Path("samples")
 DEVICES = {"Automatic": None, "GPU": "0", "CPU": "cpu"}
 LOCAL_SOURCES = ("Video in data/videos", "Upload a video", "Camera or stream")
-PUBLIC_SOURCES = ("Sample video", "Upload a video")
+# Sources that need the visitor's own computer. The demo lists them too, greyed out, so visitors
+# see everything the project does.
+LOCAL_ONLY_SOURCES = ("Video in data/videos", "Camera or stream")
+PUBLIC_SOURCES = ("Sample video", "Upload a video", *LOCAL_ONLY_SOURCES)
 LAST_RUN = "last_run"
 SESSION_DIR = "session_dir"
 CARDS_PER_ROW = 4
@@ -44,6 +48,13 @@ PUBLIC_SESSION_HOURS = 2
 # the same plates right on two clips with answer keys. The detector still sees every frame.
 PUBLIC_OCR_EVERY_N_FRAMES = 2
 SOURCE_CODE_URL = "https://github.com/rahulmandal0207/vrpr"
+CLONE_COMMAND = f"git clone {SOURCE_CODE_URL}.git"
+# Shown on hover over each control the demo cannot offer.
+CLONE_HELP = (
+    f"Not available in this demo. [Clone VRPR from GitHub]({SOURCE_CODE_URL}) and run it on your "
+    "own computer to use this."
+)
+NOTICE_SHOWN = "demo_notice_shown"
 
 PUBLIC = runs.public_demo()
 
@@ -86,16 +97,27 @@ def session_folder() -> Path:
 def settings_sidebar(base: AppConfig) -> AppConfig:
     sidebar = st.sidebar
     sidebar.header("Settings")
-    if PUBLIC:
-        weights, device, ocr_gpu, save_video = str(base.detector.weights), "CPU", False, False
-    else:
-        weights = sidebar.text_input("Detector weights", str(base.detector.weights), key="weights")
-        device = sidebar.selectbox("Run the detector on", list(DEVICES), key="device") or ""
+    # In the demo these controls are shown greyed out, with a tooltip on how to get them.
+    locked: dict[str, Any] = {"disabled": True, "help": CLONE_HELP} if PUBLIC else {}
+    weights = sidebar.text_input(
+        "Detector weights", str(base.detector.weights), key="weights", **locked
+    )
+    device = (
+        sidebar.selectbox(
+            "Run the detector on",
+            list(DEVICES),
+            index=list(DEVICES).index("CPU") if PUBLIC else 0,
+            key="device",
+            **locked,
+        )
+        or ""
+    )
     confidence = sidebar.slider(
         "Detection confidence", 0.05, 0.95, float(base.detector.confidence), 0.05, key="confidence"
     )
-    if not PUBLIC:
-        ocr_gpu = sidebar.checkbox("Read text on the GPU", base.ocr.gpu, key="ocr_gpu")
+    ocr_gpu = sidebar.checkbox(
+        "Read text on the GPU", base.ocr.gpu and not PUBLIC, key="ocr_gpu", **locked
+    )
     agreement = sidebar.number_input(
         "Readings that must agree",
         min_value=1,
@@ -103,10 +125,16 @@ def settings_sidebar(base: AppConfig) -> AppConfig:
         value=base.consensus.min_agreement,
         key="agreement",
     )
-    if not PUBLIC:
-        save_video = sidebar.checkbox(
-            "Save an annotated video", base.output.save_annotated_video, key="save_video"
-        )
+    save_video = sidebar.checkbox(
+        "Save an annotated video",
+        base.output.save_annotated_video and not PUBLIC,
+        key="save_video",
+        **locked,
+    )
+    if PUBLIC:
+        # Disabled widgets keep their values, but the demo must never use the local settings.
+        weights, device, ocr_gpu, save_video = str(base.detector.weights), "CPU", False, False
+    else:
         sidebar.caption(
             "Plate numbers and images are personal data. Results stay on this computer."
         )
@@ -155,11 +183,28 @@ def choose_from_folder(folder: Path) -> str | None:
     return str(folder / chosen) if chosen else None
 
 
+def locked_source(mode: str) -> None:
+    """Show a local-only source's input, greyed out, so the demo still shows what it does."""
+    if mode == LOCAL_ONLY_SOURCES[0]:
+        st.selectbox(
+            "Video", ["Videos from your own data/videos folder"], disabled=True, help=CLONE_HELP
+        )
+    else:
+        st.text_input("Camera number or stream URL", "0", disabled=True, help=CLONE_HELP)
+
+
 def choose_source() -> str | None:
     sources = PUBLIC_SOURCES if PUBLIC else LOCAL_SOURCES
-    mode = st.radio("Source", sources, horizontal=True, key="source_mode")
+    captions = [
+        "Needs your own computer" if PUBLIC and source in LOCAL_ONLY_SOURCES else ""
+        for source in sources
+    ]
+    mode = st.radio("Source", sources, horizontal=True, key="source_mode", captions=captions)
     if mode == "Upload a video":
         return choose_upload()
+    if PUBLIC and mode is not None and mode in LOCAL_ONLY_SOURCES:
+        locked_source(mode)
+        return None
     if mode == sources[0]:
         return choose_from_folder(SAMPLE_DIR if PUBLIC else VIDEO_DIR)
     value = (st.text_input("Camera number or stream URL", "0", key="stream") or "").strip()
@@ -292,6 +337,24 @@ def show_results(run_dir: Path, place: str) -> None:
     st.caption(f"Run folder: {run_dir.resolve()}")
 
 
+@st.dialog("This is a demo", icon=":material/info:", width="medium")
+def demo_notice() -> None:
+    st.markdown(
+        "This page is a demo of VRPR. It runs on a small shared server with no GPU, so it is "
+        f"slow, reads plates less often and analyses only the first {PUBLIC_MAX_SECONDS} seconds "
+        "of each video. Some settings and sources are greyed out because they need your own "
+        "computer."
+    )
+    st.markdown(
+        "To see how fast and accurate it really is, clone the repository and run it with a GPU:"
+    )
+    st.code(CLONE_COMMAND, language="bash")
+    with st.container(horizontal=True):
+        st.link_button("Open on GitHub", SOURCE_CODE_URL, icon=":material/open_in_new:")
+        if st.button("Try the demo", type="primary", key="close_notice"):
+            st.rerun()
+
+
 def public_notice() -> None:
     st.caption(
         f"A demo of [VRPR]({SOURCE_CODE_URL}), open source under the MIT License with "
@@ -308,6 +371,10 @@ def main() -> None:
     st.title("Vehicle registration plate recognition")
     if PUBLIC:
         public_notice()
+        # Mark it shown first, so closing it any way, including the X, keeps it closed.
+        if not st.session_state.get(NOTICE_SHOWN):
+            st.session_state[NOTICE_SHOWN] = True
+            demo_notice()
 
     config = settings_sidebar(load_config(CONFIG_PATH if CONFIG_PATH.is_file() else None))
     run_tab, history_tab = st.tabs(["Run", "Past runs"])
