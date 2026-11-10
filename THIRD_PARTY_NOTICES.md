@@ -12,6 +12,15 @@ VRPR's own source code is under the [MIT License](LICENSE). Its dependencies hav
 | [PyYAML](https://github.com/yaml/pyyaml) | MIT | Configuration |
 | [Roboflow](https://github.com/roboflow/roboflow-python) | Apache-2.0 | Optional dataset download |
 
+## Data
+
+| Data | License | Used for |
+| --- | --- | --- |
+| [Wikipedia: List of Regional Transport Office districts in India](https://en.wikipedia.org/wiki/List_of_Regional_Transport_Office_districts_in_India), reformatted as `src/vrpr/data/rto_codes.csv` | [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) | Plate details |
+
+Changes to that table may be shared only under CC BY-SA 4.0. See
+[src/vrpr/data/CREDITS.md](src/vrpr/data/CREDITS.md).
+
 ## AGPL-3.0 and distribution
 
 The `ml` extra installs Ultralytics. The MIT License covers this repository's code, but it does not

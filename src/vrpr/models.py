@@ -109,6 +109,13 @@ class PlateRecord:
     # only because its vehicle left the picture is a best guess, and False here.
     confirmed: bool = True
     crop_path: str | None = None
+    # What the number itself says, from the bundled RTO table. Never the owner: see
+    # vrpr.plate_details.
+    state: str = ""
+    rto_code: str = ""
+    rto_office: str = ""
+    rto_area: str = ""
+    registered_year: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

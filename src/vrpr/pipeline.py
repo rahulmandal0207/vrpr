@@ -20,6 +20,7 @@ from vrpr.exceptions import OcrError
 from vrpr.imaging import crop_plate, prepare_for_ocr
 from vrpr.models import Track
 from vrpr.ocr import EasyOcrEngine, OcrEngine
+from vrpr.plate_details import describe_plate
 from vrpr.plates import mask_plate, read_plate
 from vrpr.rendering import AnnotatedVideoWriter, FrameObserver, WindowPreview, annotate
 from vrpr.sinks import CropStore, CsvSink, JsonlSink, ResultSink
@@ -148,6 +149,16 @@ class Pipeline:
 
     def _emit(self, finalized: FinalizedPlate) -> None:
         record = finalized.record
+        details = describe_plate(record.plate)
+        if details is not None:
+            record = replace(
+                record,
+                state=details.state,
+                rto_code=details.rto_code,
+                rto_office=details.rto_office,
+                rto_area=details.rto_area,
+                registered_year=details.registered_year,
+            )
         if self._crop_store is not None and finalized.crop is not None:
             path = self._crop_store.save(record.track_id, record.plate, finalized.crop)
             if path is not None:

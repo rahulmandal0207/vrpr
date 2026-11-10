@@ -38,3 +38,8 @@ Earlier versions included a disabled call to a third-party API that returned own
 sent a hardcoded statement of consent. It was removed on purpose: the people whose plates are
 scanned have not consented to that lookup, and software cannot give consent on their behalf. Do not
 add a lookup like this without a lawful basis of your own.
+
+The plate details VRPR does show, the state, RTO office and area, and the year of a Bharat series
+plate, come from the registration number and a public table of RTO codes bundled with VRPR. They
+say where a number was issued, not who owns the vehicle, and no plate is sent anywhere to get
+them.

@@ -21,6 +21,7 @@ from vrpr.evaluate import evaluate, read_plates
 from vrpr.exceptions import ConfigError, DependencyError, VrprError
 from vrpr.logging_setup import configure_logging
 from vrpr.pipeline import execute_run
+from vrpr.plate_details import describe_plate
 from vrpr.plates import parse_plate
 from vrpr.training import TrainingOptions, download_dataset, train_model, validate_model
 
@@ -222,7 +223,11 @@ def _parse(args: argparse.Namespace) -> int:
     if parsed is None:
         print("Not a recognized plate")
         return EXIT_NO_MATCH
-    print(json.dumps(asdict(parsed), indent=2))
+    result = asdict(parsed)
+    details = describe_plate(parsed.plate)
+    if details is not None:
+        result.update(details.to_fields(), summary=details.summary, note=details.note)
+    print(json.dumps(result, indent=2))
     return EXIT_OK
 
 

@@ -225,6 +225,20 @@ def test_crops_can_be_turned_off(config: AppConfig, make_video) -> None:
     assert rows(settings, summary.run_id)[0]["crop_path"] == ""
 
 
+def test_results_carry_the_plate_details(config: AppConfig, make_video) -> None:
+    detector = ScriptedDetector([[box(10)]] * 3)
+    summary = execute_run(config, str(make_video(3)), detector=detector, ocr=StubOcr("HR26DK8337"))
+
+    row = rows(config, summary.run_id)[0]
+    assert (row["state"], row["rto_code"]) == ("Haryana", "HR-26")
+    assert row["rto_office"].startswith("Gurugram")
+    assert row["registered_year"] == ""
+    run_dir = config.output.directory / summary.run_id
+    line = json.loads((run_dir / "plates.jsonl").read_text(encoding="utf-8"))
+    assert line["state"] == "Haryana"
+    assert line["registered_year"] is None
+
+
 def test_full_plates_stay_out_of_the_logs(config: AppConfig, make_video, caplog) -> None:
     caplog.set_level("INFO")
     detector = ScriptedDetector([[box(10)]] * 3)

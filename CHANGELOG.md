@@ -22,6 +22,9 @@ differ from before: see the README.
 - A public demo for Streamlit Community Cloud, kept on the `demo` branch.
 - The trained model, `models/best.pt`, so a fresh clone runs without training.
 - Speed and time left in the web page's progress bar.
+- Plate details: the state, RTO office and area of each plate, and the year of Bharat series
+  plates, from a bundled table of about 1,300 RTO codes. They are added to `plates.csv`,
+  `plates.jsonl`, the web page's plate cards and `vrpr parse`, and need no network access.
 
 ### Performance
 
