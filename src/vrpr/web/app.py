@@ -14,6 +14,7 @@ from vrpr.exceptions import VrprError
 from vrpr.models import Frame
 from vrpr.ocr import EasyOcrEngine
 from vrpr.pipeline import execute_run
+from vrpr.plate_details import describe_plate
 from vrpr.web import runs
 
 CONFIG_PATH = Path("configs/default.yaml")
