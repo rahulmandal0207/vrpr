@@ -1,13 +1,7 @@
-"""The VRPR web page, a Streamlit script.
-
-Start it with ``vrpr web`` from the project folder. ``streamlit_app.py`` at the repository root
-serves the same page as a public demo, for hosting such as Streamlit Community Cloud.
-"""
+"""The VRPR web page, a Streamlit script. Start it with ``vrpr web`` from the project folder."""
 
 from __future__ import annotations
 
-import tempfile
-import threading
 import time
 from dataclasses import replace
 from pathlib import Path
@@ -20,32 +14,18 @@ from vrpr.exceptions import VrprError
 from vrpr.models import Frame
 from vrpr.ocr import EasyOcrEngine
 from vrpr.pipeline import execute_run
-from vrpr.rendering import FrameObserver
 from vrpr.web import runs
 
 CONFIG_PATH = Path("configs/default.yaml")
 VIDEO_DIR = Path("data/videos")
 UPLOAD_DIR = Path("data/uploads")
-SAMPLE_DIR = Path("samples")
 DEVICES = {"Automatic": None, "GPU": "0", "CPU": "cpu"}
-LOCAL_SOURCES = ("Video in data/videos", "Upload a video", "Camera or stream")
-PUBLIC_SOURCES = ("Sample video", "Upload a video")
+SOURCES = ("Video in data/videos", "Upload a video", "Camera or stream")
 LAST_RUN = "last_run"
-SESSION_DIR = "session_dir"
 CARDS_PER_ROW = 4
 # The preview is display only: the pipeline always analyses full-size frames.
 PREVIEW_WIDTH = 960
 PREVIEW_INTERVAL_SECONDS = 0.1
-# Public demo limits keep one visitor from tying up a small shared server.
-PUBLIC_MAX_SECONDS = 15
-PUBLIC_MAX_UPLOAD_MB = 50
-PUBLIC_SESSION_HOURS = 2
-# OCR is the slowest stage on a CPU. Reading every second frame needed 35-48% fewer reads and got
-# the same plates right on two clips with answer keys. The detector still sees every frame.
-PUBLIC_OCR_EVERY_N_FRAMES = 2
-SOURCE_CODE_URL = "https://github.com/rahulmandal0207/vrpr"
-
-PUBLIC = runs.public_demo()
 
 
 @st.cache_resource(show_spinner="Loading the plate detector...")
@@ -65,37 +45,15 @@ def load_ocr(languages: tuple[str, ...], gpu: bool) -> EasyOcrEngine:
     return EasyOcrEngine(OcrConfig(languages=languages, gpu=gpu))
 
 
-@st.cache_resource
-def run_lock() -> threading.Lock:
-    """The models are shared by every visitor and are not safe to run on two videos at once."""
-    return threading.Lock()
-
-
-def session_folder() -> Path:
-    """A private folder for this browser session, so visitors never see each other's runs."""
-    existing = st.session_state.get(SESSION_DIR)
-    if existing and Path(existing).is_dir():
-        return Path(existing)
-    root = Path(tempfile.gettempdir())
-    runs.remove_old_sessions(root, PUBLIC_SESSION_HOURS * 3600)
-    folder = Path(tempfile.mkdtemp(prefix=runs.SESSION_PREFIX, dir=root))
-    st.session_state[SESSION_DIR] = str(folder)
-    return folder
-
-
 def settings_sidebar(base: AppConfig) -> AppConfig:
     sidebar = st.sidebar
     sidebar.header("Settings")
-    if PUBLIC:
-        weights, device, ocr_gpu, save_video = str(base.detector.weights), "CPU", False, False
-    else:
-        weights = sidebar.text_input("Detector weights", str(base.detector.weights), key="weights")
-        device = sidebar.selectbox("Run the detector on", list(DEVICES), key="device") or ""
+    weights = sidebar.text_input("Detector weights", str(base.detector.weights), key="weights")
+    device = sidebar.selectbox("Run the detector on", list(DEVICES), key="device")
     confidence = sidebar.slider(
         "Detection confidence", 0.05, 0.95, float(base.detector.confidence), 0.05, key="confidence"
     )
-    if not PUBLIC:
-        ocr_gpu = sidebar.checkbox("Read text on the GPU", base.ocr.gpu, key="ocr_gpu")
+    ocr_gpu = sidebar.checkbox("Read text on the GPU", base.ocr.gpu, key="ocr_gpu")
     agreement = sidebar.number_input(
         "Readings that must agree",
         min_value=1,
@@ -103,65 +61,46 @@ def settings_sidebar(base: AppConfig) -> AppConfig:
         value=base.consensus.min_agreement,
         key="agreement",
     )
-    if not PUBLIC:
-        save_video = sidebar.checkbox(
-            "Save an annotated video", base.output.save_annotated_video, key="save_video"
-        )
-        sidebar.caption(
-            "Plate numbers and images are personal data. Results stay on this computer."
-        )
+    save_crops = sidebar.checkbox("Save plate images", base.output.save_crops, key="save_crops")
+    save_video = sidebar.checkbox(
+        "Save an annotated video", base.output.save_annotated_video, key="save_video"
+    )
+    sidebar.caption("Plate numbers and images are personal data. Results stay on this computer.")
 
-    output = base.output
-    if PUBLIC:
-        output = replace(output, directory=session_folder() / "output", save_crops=True)
     return replace(
         base,
         detector=replace(
-            base.detector, weights=Path(weights), confidence=confidence, device=DEVICES.get(device)
+            base.detector,
+            weights=Path(weights),
+            confidence=confidence,
+            device=DEVICES.get(device or ""),
         ),
-        ocr=replace(
-            base.ocr,
-            gpu=ocr_gpu,
-            every_n_frames=PUBLIC_OCR_EVERY_N_FRAMES if PUBLIC else base.ocr.every_n_frames,
-        ),
+        ocr=replace(base.ocr, gpu=ocr_gpu),
         consensus=replace(base.consensus, min_agreement=int(agreement)),
-        output=replace(output, save_annotated_video=save_video),
+        output=replace(base.output, save_crops=save_crops, save_annotated_video=save_video),
     )
-
-
-def choose_upload() -> str | None:
-    upload = st.file_uploader(
-        "Video file",
-        type=sorted(suffix[1:] for suffix in runs.VIDEO_SUFFIXES),
-        key="upload",
-        max_upload_size=PUBLIC_MAX_UPLOAD_MB if PUBLIC else None,
-    )
-    if upload is None:
-        return None
-    if st.session_state.get("upload_saved_for") != upload.file_id:
-        folder = session_folder() / "uploads" if PUBLIC else UPLOAD_DIR
-        saved = runs.save_upload(upload.name, upload.getvalue(), folder)
-        st.session_state["upload_saved_for"] = upload.file_id
-        st.session_state["upload_path"] = str(saved)
-    return str(st.session_state["upload_path"])
-
-
-def choose_from_folder(folder: Path) -> str | None:
-    videos = runs.list_videos(folder)
-    if not videos:
-        st.info(f"No videos found in {folder}. Upload one, or add files to that folder.")
-        return None
-    chosen = st.selectbox("Video", [video.name for video in videos], key="video")
-    return str(folder / chosen) if chosen else None
 
 
 def choose_source() -> str | None:
-    sources = PUBLIC_SOURCES if PUBLIC else LOCAL_SOURCES
-    mode = st.radio("Source", sources, horizontal=True, key="source_mode")
-    if mode == "Upload a video":
-        return choose_upload()
-    if mode == sources[0]:
-        return choose_from_folder(SAMPLE_DIR if PUBLIC else VIDEO_DIR)
+    mode = st.radio("Source", SOURCES, horizontal=True, key="source_mode")
+    if mode == SOURCES[0]:
+        videos = runs.list_videos(VIDEO_DIR)
+        if not videos:
+            st.info(f"No videos found in {VIDEO_DIR}. Upload one, or add files to that folder.")
+            return None
+        chosen = st.selectbox("Video", [video.name for video in videos], key="video")
+        return str(VIDEO_DIR / chosen) if chosen else None
+    if mode == SOURCES[1]:
+        upload = st.file_uploader(
+            "Video file", type=sorted(suffix[1:] for suffix in runs.VIDEO_SUFFIXES), key="upload"
+        )
+        if upload is None:
+            return None
+        if st.session_state.get("upload_saved_for") != upload.file_id:
+            saved = runs.save_upload(upload.name, upload.getvalue(), UPLOAD_DIR)
+            st.session_state["upload_saved_for"] = upload.file_id
+            st.session_state["upload_path"] = str(saved)
+        return str(st.session_state["upload_path"])
     value = (st.text_input("Camera number or stream URL", "0", key="stream") or "").strip()
     return value or None
 
@@ -170,9 +109,6 @@ def run_pipeline(config: AppConfig, source: str) -> None:
     # Show progress before touching the file: OneDrive may still be downloading it.
     progress = st.progress(0.0, text="Preparing the video...")
     total = runs.frame_count(source)
-    limit = runs.FrameLimit(runs.frames_for_seconds(source, PUBLIC_MAX_SECONDS)) if PUBLIC else None
-    if limit is not None and total:
-        total = min(total, limit.max_frames)
     preview = st.empty()
     started: list[float] = []
 
@@ -191,16 +127,8 @@ def run_pipeline(config: AppConfig, source: str) -> None:
         value = frames / total if total and frames <= total else (0.99 if total else 0.0)
         progress.progress(value, text=text)
 
-    observers: list[FrameObserver] = [runs.ThrottledObserver(update, PREVIEW_INTERVAL_SECONDS)]
-    if limit is not None:
-        observers.append(limit)
-
-    lock = run_lock()
-    if not lock.acquire(blocking=False):
-        progress.progress(0.0, text="Waiting for another video to finish...")
-        lock.acquire()
+    weights = config.detector.weights
     try:
-        weights = config.detector.weights
         detector = load_detector(
             str(weights),
             config.detector.confidence,
@@ -209,16 +137,18 @@ def run_pipeline(config: AppConfig, source: str) -> None:
             weights.stat().st_mtime if weights.is_file() else 0.0,
         )
         ocr = load_ocr(config.ocr.languages, config.ocr.gpu)
-        summary = execute_run(config, source, detector=detector, ocr=ocr, observers=observers)
+        summary = execute_run(
+            config,
+            source,
+            detector=detector,
+            ocr=ocr,
+            observers=[runs.ThrottledObserver(update, PREVIEW_INTERVAL_SECONDS)],
+        )
     except VrprError as exc:
         progress.empty()
         st.error(str(exc))
         return
-    finally:
-        lock.release()
     progress.progress(1.0, text=f"Done: {summary.frames} frames")
-    if limit is not None and limit.reached:
-        st.info(f"This demo analyses the first {PUBLIC_MAX_SECONDS} seconds of each video.")
     st.session_state[LAST_RUN] = str(config.output.directory / summary.run_id)
 
 
@@ -285,29 +215,14 @@ def show_results(run_dir: Path, place: str) -> None:
             mime="text/csv",
             key=f"download-{place}-{results.run_id}",
         )
-    if PUBLIC:
-        return
     if (run_dir / "annotated.mp4").is_file():
         st.caption("The annotated video is saved in the run folder. Open it with a video player.")
     st.caption(f"Run folder: {run_dir.resolve()}")
 
 
-def public_notice() -> None:
-    st.caption(
-        f"A demo of [VRPR]({SOURCE_CODE_URL}), open source under the MIT License with "
-        "AGPL-3.0 dependencies. It runs on a small shared CPU, so it analyses at most "
-        f"{PUBLIC_MAX_SECONDS} seconds of each video. Videos you upload are processed on this "
-        f"server, visible only in your browser session, and deleted within about "
-        f"{PUBLIC_SESSION_HOURS} hours. Number plates are personal data: only upload footage you "
-        "are allowed to share. Readings can be wrong, so do not rely on them."
-    )
-
-
 def main() -> None:
     st.set_page_config(page_title="VRPR", layout="wide")
     st.title("Vehicle registration plate recognition")
-    if PUBLIC:
-        public_notice()
 
     config = settings_sidebar(load_config(CONFIG_PATH if CONFIG_PATH.is_file() else None))
     run_tab, history_tab = st.tabs(["Run", "Past runs"])
