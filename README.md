@@ -48,9 +48,15 @@ pip install -e ".[ml]"
 
 Add `dataset` to the extras to download training data, and `dev` to run the tests.
 
+On Windows with Smart App Control on, the `vrpr.exe`, `pip.exe` and `pytest.exe` launchers that pip
+creates are unsigned and may be blocked. Run them through Python instead, for example
+`python -m vrpr web` or `python -m pytest`. Create the environment from the signed Python on
+[python.org](https://www.python.org/downloads/windows/) too: a venv's `python.exe` is copied from
+the Python it was made with, and an unsigned copy can also be blocked.
+
 ## Quick start
 
-A model is not included, so train one first or copy your own to `models/best.pt`.
+A trained model is included as `models/best.pt`. To use your own, train one or replace that file.
 
 ```bash
 vrpr run traffic.mp4
@@ -70,7 +76,7 @@ Each run writes to its own folder, `output/<run id>/`:
 
 | File | Contents |
 | --- | --- |
-| `plates.csv`, `plates.jsonl` | One record per vehicle, written a few seconds after it leaves the picture. `confirmed` is false when too few readings agreed, so the plate is a best guess |
+| `plates.csv`, `plates.jsonl` | One record per vehicle, written a few seconds after it leaves the picture. `confirmed` is false when too few readings agreed, so the plate is a best guess. `state`, `rto_code`, `rto_office`, `rto_area` and `registered_year` describe the number: see [Plate details](#plate-details) |
 | `crops/` | The clearest image of each plate |
 | `summary.json` | Frames, speed, OCR calls, plates found and tracks left unread |
 | `annotated.mp4` | The video with boxes drawn, with `--save-video` |
@@ -80,6 +86,35 @@ To check how a piece of text would be read as a plate:
 ```bash
 vrpr parse "HR 26 DK 8337"
 ```
+
+## Plate details
+
+An Indian registration number says where it was issued. VRPR reads that from the number itself
+and a bundled table of about 1,300 RTO codes, so it works offline, costs nothing and needs no API
+key. Each plate gets:
+
+| Field | Example for `UP16AU6426` | Example for `22BH1234AB` |
+| --- | --- | --- |
+| `state` | Uttar Pradesh | (blank: valid in every state) |
+| `rto_code` | UP-16 | (blank) |
+| `rto_office` | Noida | (blank) |
+| `rto_area` | Gautam Buddha Nagar district | (blank) |
+| `registered_year` | (blank) | 2022 |
+
+The web page shows the same on each confirmed plate card, and `vrpr parse` prints it. The
+files have details for every plate, so filter on `confirmed` before relying on them. Former state codes
+such as `TS` (now `TG`) and `OR` (now `OD`) are recognised. Codes missing from the table give only
+the state. The details describe the number as read, so a misread plate gets the details of a
+different number: that is why the page shows none for unconfirmed plates.
+
+The table comes from Wikipedia, under CC BY-SA 4.0: see
+[src/vrpr/data/CREDITS.md](src/vrpr/data/CREDITS.md). Rebuild it with
+`python scripts/build_rto_codes.py`.
+
+VRPR does not look up a vehicle's owner, model or insurance. There is no free official API for
+that: Vahan data is sold through KYC providers for checking a vehicle whose owner agrees, and
+using it on plates read from traffic would look up people who have not. See
+[docs/privacy.md](docs/privacy.md#vehicle-owner-lookups).
 
 ## Web interface
 
