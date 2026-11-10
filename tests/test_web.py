@@ -311,6 +311,25 @@ def test_page_marks_unconfirmed_plates(app_test) -> None:
     assert any("1 of these plates are unconfirmed" in caption.value for caption in app_test.caption)
 
 
+def test_plate_cards_show_where_the_plate_was_issued(app_test) -> None:
+    # This run's CSV has no detail columns, as in runs made before they existed.
+    write_run(
+        Path("output"),
+        "20261108T100000Z-aaaaaa",
+        ["MH12AB1234", "22BH1234AB", "AP80CD3389"],
+        unconfirmed=frozenset({"AP80CD3389"}),
+    )
+    app_test.run()
+    assert not app_test.exception
+    details = [
+        md.value for md in app_test.markdown if md.value.startswith(":material/location_on:")
+    ]
+    assert any("Pune RTO (MH-12)" in text and "Maharashtra" in text for text in details)
+    assert any("Bharat series" in text and "2022" in text for text in details)
+    # An unconfirmed plate may be misread, so it gets no details.
+    assert not any("AP-80" in text for text in details)
+
+
 def test_page_shows_past_runs(app_test) -> None:
     write_run(Path("output"), "20261108T100000Z-aaaaaa", ["MH12AB1234"])
     app_test.run()

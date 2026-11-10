@@ -20,6 +20,7 @@ from vrpr.exceptions import VrprError
 from vrpr.models import Frame
 from vrpr.ocr import EasyOcrEngine
 from vrpr.pipeline import execute_run
+from vrpr.plate_details import describe_plate
 from vrpr.rendering import FrameObserver
 from vrpr.web import runs
 
@@ -244,8 +245,17 @@ def show_plate_cards(results: runs.RunResults) -> None:
                 if image is not None:
                     st.image(str(image), width="stretch", alt=f"Number plate read as {plate}")
                 st.markdown(f"#### {plate}")
-                if runs.is_unconfirmed(row):
+                unconfirmed = runs.is_unconfirmed(row)
+                if unconfirmed:
                     st.badge("Unconfirmed", icon=":material/help:", color="orange")
+                # Details describe the number as read, so a misread plate would get another
+                # number's. Show them only once enough readings agree. They are worked out from
+                # the number itself, so runs from before these columns existed get them too.
+                details = None if unconfirmed else describe_plate(plate)
+                if details is not None and details.summary:
+                    st.markdown(
+                        f":material/location_on: {details.summary}", help=details.note or None
+                    )
                 st.caption(
                     f"Confidence {float(row.get('confidence') or 0):.2f} · "
                     f"{row.get('votes', '?')} of {row.get('total_reads', '?')} readings agree · "

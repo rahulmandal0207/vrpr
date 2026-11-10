@@ -474,7 +474,10 @@ def test_cli_version(capsys) -> None:
 
 def test_cli_parse(capsys) -> None:
     assert cli.main(["parse", "HR 26 DK 8337"]) == cli.EXIT_OK
-    assert json.loads(capsys.readouterr().out)["plate"] == "HR26DK8337"
+    result = json.loads(capsys.readouterr().out)
+    assert result["plate"] == "HR26DK8337"
+    assert (result["state"], result["rto_code"]) == ("Haryana", "HR-26")
+    assert "HR-26" in result["summary"]
 
 
 def test_cli_parse_no_match() -> None:
