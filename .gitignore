@@ -7,9 +7,8 @@
 *.mp4
 *.avi
 
-# Kept for the public demo: the trained plate detector and a short openly licensed sample
+# The trained plate detector is kept, so a fresh clone works
 !/models/best.pt
-!/samples/*.mp4
 
 # Secrets
 .env

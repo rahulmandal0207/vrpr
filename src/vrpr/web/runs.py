@@ -4,9 +4,7 @@ from __future__ import annotations
 
 import csv
 import json
-import os
 import re
-import shutil
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -21,55 +19,6 @@ from vrpr.video import is_live_source
 
 VIDEO_SUFFIXES = frozenset({".mp4", ".webm", ".avi", ".mov", ".mkv", ".m4v"})
 _UNSAFE_CHARACTERS = re.compile(r"[^A-Za-z0-9._-]+")
-_FALLBACK_FPS = 30.0
-
-PUBLIC_DEMO_VARIABLE = "VRPR_PUBLIC_DEMO"
-SESSION_PREFIX = "vrpr-session-"
-
-
-def public_demo() -> bool:
-    """True when the page is served to the public, as set by ``streamlit_app.py``."""
-    return os.environ.get(PUBLIC_DEMO_VARIABLE) == "1"
-
-
-def remove_old_sessions(root: Path, max_age_seconds: float, now: float | None = None) -> int:
-    """Delete public-demo session folders older than the limit, and return how many."""
-    now = time.time() if now is None else now
-    removed = 0
-    for folder in root.glob(f"{SESSION_PREFIX}*"):
-        if folder.is_dir() and now - folder.stat().st_mtime > max_age_seconds:
-            shutil.rmtree(folder, ignore_errors=True)
-            removed += 1
-    return removed
-
-
-def frames_for_seconds(source: str, seconds: float) -> int:
-    """How many frames of a video make up the given duration."""
-    capture = cv.VideoCapture(source)
-    try:
-        fps = capture.get(cv.CAP_PROP_FPS)
-    finally:
-        capture.release()
-    return max(1, round((fps if 0 < fps <= 240 else _FALLBACK_FPS) * seconds))
-
-
-class FrameLimit:
-    """Stops a run after a number of frames, so one visitor cannot tie up a shared server."""
-
-    def __init__(self, max_frames: int) -> None:
-        self.max_frames = max_frames
-        self.frames = 0
-
-    def observe(self, frame: Frame) -> bool:
-        self.frames += 1
-        return self.frames < self.max_frames
-
-    @property
-    def reached(self) -> bool:
-        return self.frames >= self.max_frames
-
-    def close(self) -> None:
-        pass
 
 
 def progress_text(frames: int, total: int | None, seconds_since_first: float) -> str:

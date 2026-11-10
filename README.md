@@ -136,48 +136,11 @@ it. Settings in the side panel start from `configs/default.yaml`. Uploads are sa
 
 ## Public demo
 
-The repository can run as a public web page on
-[Streamlit Community Cloud](https://streamlit.io/cloud), which is free and redeploys by itself
-whenever the chosen branch on GitHub changes.
-
-`streamlit_app.py` starts the same page in public mode. Public mode:
-
-- offers only the bundled sample in `samples/` and uploads up to 50 MB, with no cameras, streams
-  or server folders
-- analyses the first 15 seconds of each video, on the CPU, one run at a time, reading plates on
-  every second frame because OCR is the slowest stage on a CPU
-- shows the speed and time left while it works, since a small shared CPU analyses video more
-  slowly than it plays
-- keeps each visitor's uploads and results in a private temporary folder, deleted after about
-  2 hours
-- hides the model, device and save-video settings, and links back to this source code, which the
-  AGPL-3.0 dependencies require
-
-To publish it:
-
-1. Sign in at [share.streamlit.io](https://share.streamlit.io) with GitHub.
-2. Choose **Create app**, then **Deploy a public app from GitHub**.
-3. Pick this repository and the branch to publish, and set the main file to `streamlit_app.py`.
-4. Under **Advanced settings**, choose Python 3.12, then deploy.
-
-The first build installs PyTorch, Ultralytics and EasyOCR and takes several minutes. Later pushes to
-the branch redeploy automatically. The host gives about 2.7 GB of memory, and a run peaks at about
-1.2 GB. An app with no visitors for a while goes to sleep, and the next visitor wakes it, which
-takes a minute.
-
-The host caps CPU time at a fraction of a core to 2 cores, but reports every core of the machine.
-VRPR sizes PyTorch's threads to the cap, read from the container's cgroup settings, because
-extra threads spend the allowance waiting on each other.
-
-`requirements.txt` and `packages.txt` exist only for the host: install locally with `pip` and
-`pyproject.toml` as above. The trained model is committed as `models/best.pt` so the host can load
-it.
-
-To try public mode locally:
-
-```bash
-streamlit run streamlit_app.py
-```
+A public demo runs at [vrprdemo.streamlit.app](https://vrprdemo.streamlit.app/), on Streamlit
+Community Cloud. It is served from the [`demo`](https://github.com/rahulmandal0207/vrpr/tree/demo)
+branch, which adds the hosting files, a CC0 sample clip and a public mode to this page: a 15-second
+cap, private per-visitor sessions, and local-only settings shown greyed out. It runs on a shared CPU
+without a GPU, so it is much slower than VRPR on your own computer.
 
 ## Train a model
 

@@ -2,9 +2,7 @@
 
 import csv
 import json
-import os
 import subprocess
-import tempfile
 from pathlib import Path
 
 import cv2 as cv
@@ -17,7 +15,6 @@ from vrpr.models import BoundingBox, Detection, OcrFragment
 from vrpr.web import runs
 
 APP = Path(runs.__file__).with_name("app.py")
-ENTRY_POINT = Path(__file__).resolve().parent.parent / "streamlit_app.py"
 
 
 # Finding videos and runs
@@ -338,44 +335,7 @@ def test_page_shows_past_runs(app_test) -> None:
     assert plates_shown(app_test) == ["MH12AB1234"]
 
 
-# The public demo
-
-
-def test_public_demo_is_off_unless_switched_on(monkeypatch) -> None:
-    monkeypatch.delenv(runs.PUBLIC_DEMO_VARIABLE, raising=False)
-    assert not runs.public_demo()
-    monkeypatch.setenv(runs.PUBLIC_DEMO_VARIABLE, "0")
-    assert not runs.public_demo()
-    monkeypatch.setenv(runs.PUBLIC_DEMO_VARIABLE, "1")
-    assert runs.public_demo()
-
-
-def test_old_session_folders_are_removed(tmp_path: Path) -> None:
-    old = tmp_path / f"{runs.SESSION_PREFIX}old"
-    new = tmp_path / f"{runs.SESSION_PREFIX}new"
-    unrelated = tmp_path / "something-else"
-    for folder in (old, new, unrelated):
-        folder.mkdir()
-    os.utime(old, (1000, 1000))
-    os.utime(unrelated, (1000, 1000))
-    assert runs.remove_old_sessions(tmp_path, max_age_seconds=3600, now=1000 + 7200) == 1
-    assert not old.exists()
-    assert new.exists() and unrelated.exists()
-
-
-def test_frames_for_seconds(make_video) -> None:
-    assert runs.frames_for_seconds(str(make_video(10)), 0.5) == 5  # the test videos are 10 fps
-
-
-def test_frames_for_seconds_falls_back_for_unknown_rates() -> None:
-    assert runs.frames_for_seconds("missing.mp4", 2) == 60
-
-
-def test_frame_limit_stops_the_run_at_the_limit() -> None:
-    limit = runs.FrameLimit(3)
-    frame = np.zeros((2, 2, 3), np.uint8)
-    assert [limit.observe(frame) for _ in range(3)] == [True, True, False]
-    assert limit.reached
+# Progress text
 
 
 def test_progress_text_starts_with_the_frame_only() -> None:
@@ -396,61 +356,3 @@ def test_progress_text_shows_speed_and_time_left() -> None:
 def test_progress_text_past_an_estimated_total_shows_only_speed() -> None:
     assert runs.progress_text(251, 240, 50.0) == "Frame 251 · 5.0 frames a second"
     assert runs.progress_text(11, None, 5.0) == "Frame 11 · 2.0 frames a second"
-
-
-@pytest.fixture
-def public_page(app_test, monkeypatch, tmp_path: Path, make_video):
-    """The page as a public host serves it, with a sample video and a private temp folder."""
-    monkeypatch.setenv(runs.PUBLIC_DEMO_VARIABLE, "1")
-    temp = tmp_path / "server-temp"
-    temp.mkdir()
-    monkeypatch.setattr(tempfile, "tempdir", str(temp))
-    Path("samples").mkdir()
-    make_video(8).replace(Path("samples") / "sample.mp4")
-    Path("models").mkdir()
-    Path("models/best.pt").write_bytes(b"fake")
-    return app_test
-
-
-def test_public_page_offers_only_safe_sources_and_settings(public_page) -> None:
-    public_page.run()
-    assert not public_page.exception
-    assert public_page.radio(key="source_mode").options == ["Sample video", "Upload a video"]
-    keys = {widget.key for widget in public_page.text_input}
-    assert "weights" not in keys and "stream" not in keys, "no file paths or stream URLs"
-    assert any("personal data" in caption.value for caption in public_page.caption)
-
-
-def test_public_runs_are_private_to_each_session(public_page) -> None:
-    public_page.run()
-    public_page.button(key="run").click().run()
-    assert plates_shown(public_page), "the first visitor sees their plates"
-    assert not any("Run folder" in caption.value for caption in public_page.caption)
-
-    from streamlit.testing.v1 import AppTest
-
-    other_visitor = AppTest.from_file(str(APP), default_timeout=60)
-    other_visitor.run()
-    assert any("No runs yet" in info.value for info in other_visitor.info)
-    assert plates_shown(other_visitor) == []
-
-
-def test_public_demo_analyses_only_the_first_seconds(public_page, monkeypatch) -> None:
-    monkeypatch.setattr(runs, "frames_for_seconds", lambda source, seconds: 3)
-    public_page.run()
-    public_page.button(key="run").click().run()
-    assert not public_page.exception
-    assert str(public_page.metric[1].value) == "3", "frames analysed"
-    assert any("analyses the first" in info.value for info in public_page.info)
-
-
-def test_entry_point_serves_the_public_page(app_test, monkeypatch, tmp_path: Path) -> None:
-    # The entry point sets the switch itself; registering it here restores it afterwards.
-    monkeypatch.setenv(runs.PUBLIC_DEMO_VARIABLE, "0")
-    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
-    from streamlit.testing.v1 import AppTest
-
-    page = AppTest.from_file(str(ENTRY_POINT), default_timeout=60)
-    page.run()
-    assert not page.exception
-    assert page.radio(key="source_mode").options == ["Sample video", "Upload a video"]

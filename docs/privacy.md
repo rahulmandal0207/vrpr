@@ -15,23 +15,13 @@ places and movements over time.
 | Full video | `annotated.mp4` | Off by default, on with `--save-video` |
 | Logs | stderr | Plate numbers are masked, for example `HR26****37` |
 
-Git ignores `output/`, `data/` and video files, so results stay out of the repository. The one
-exception is the public-domain sample clip in `samples/`.
+Git ignores `output/`, `data/` and video files, so results stay out of the repository.
 
 ## Public demo
 
-In public mode (`streamlit_app.py`), anyone with the link can upload a video:
-
-- Each browser session gets its own temporary folder. Other visitors cannot see its uploads or
-  results, and folders older than about 2 hours are deleted.
-- Results are not stored anywhere else, and no plate images or annotated videos are kept after
-  the session folder is deleted.
-- The page tells visitors that plates are personal data and to upload only footage they may
-  share.
-- The host, Streamlit Community Cloud, keeps its own server logs. Plate numbers in VRPR's logs
-  are masked.
-
-If you publish the demo, you are responsible for it. Take it down if it is used to track people.
+The public demo on the `demo` branch accepts uploads from anyone with the link. Its privacy
+measures, such as private per-visitor sessions deleted after about 2 hours, are described in that
+branch's copy of this file.
 
 ## Practices to follow
 
