@@ -409,6 +409,7 @@ def test_public_page_shows_local_controls_greyed_out(public_page) -> None:
         public_page.text_input(key="weights"),
         public_page.selectbox(key="device"),
         public_page.checkbox(key="ocr_gpu"),
+        public_page.checkbox(key="save_crops"),
         public_page.checkbox(key="save_video"),
     ):
         assert widget.disabled, widget.label
@@ -433,11 +434,13 @@ def test_public_page_ignores_local_settings_sent_anyway(public_page) -> None:
     public_page.run()
     public_page.session_state["weights"] = "C:/secret/other.pt"
     public_page.session_state["save_video"] = True
+    public_page.session_state["save_crops"] = False
     public_page.session_state["device"] = "GPU"
     public_page.button(key="run").click().run()
     assert not public_page.exception
     assert not public_page.error, [error.value for error in public_page.error]
     assert plates_shown(public_page)
+    assert len(public_page.image) > 1, "plate images are still saved for the result cards"
 
 
 def test_public_page_shows_the_demo_notice_once(public_page) -> None:

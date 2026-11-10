@@ -125,6 +125,10 @@ def settings_sidebar(base: AppConfig) -> AppConfig:
         value=base.consensus.min_agreement,
         key="agreement",
     )
+    # The demo always saves plate images, because its result cards show them.
+    save_crops = sidebar.checkbox(
+        "Save plate images", base.output.save_crops or PUBLIC, key="save_crops", **locked
+    )
     save_video = sidebar.checkbox(
         "Save an annotated video",
         base.output.save_annotated_video and not PUBLIC,
@@ -133,7 +137,8 @@ def settings_sidebar(base: AppConfig) -> AppConfig:
     )
     if PUBLIC:
         # Disabled widgets keep their values, but the demo must never use the local settings.
-        weights, device, ocr_gpu, save_video = str(base.detector.weights), "CPU", False, False
+        weights, device, ocr_gpu = str(base.detector.weights), "CPU", False
+        save_crops, save_video = True, False
     else:
         sidebar.caption(
             "Plate numbers and images are personal data. Results stay on this computer."
@@ -141,7 +146,7 @@ def settings_sidebar(base: AppConfig) -> AppConfig:
 
     output = base.output
     if PUBLIC:
-        output = replace(output, directory=session_folder() / "output", save_crops=True)
+        output = replace(output, directory=session_folder() / "output")
     return replace(
         base,
         detector=replace(
@@ -153,7 +158,7 @@ def settings_sidebar(base: AppConfig) -> AppConfig:
             every_n_frames=PUBLIC_OCR_EVERY_N_FRAMES if PUBLIC else base.ocr.every_n_frames,
         ),
         consensus=replace(base.consensus, min_agreement=int(agreement)),
-        output=replace(output, save_annotated_video=save_video),
+        output=replace(output, save_crops=save_crops, save_annotated_video=save_video),
     )
 
 

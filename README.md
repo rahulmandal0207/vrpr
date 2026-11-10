@@ -50,7 +50,7 @@ Add `dataset` to the extras to download training data, and `dev` to run the test
 
 ## Quick start
 
-A model is not included, so train one first or copy your own to `models/best.pt`.
+A trained model is included as `models/best.pt`. To use your own, train one or replace that file.
 
 ```bash
 vrpr run traffic.mp4
@@ -110,8 +110,8 @@ whenever the chosen branch on GitHub changes.
 - opens with a pop-up saying it is a demo on a server without a GPU, with the command to clone
   the repository and run it properly
 - runs only the bundled sample in `samples/` and uploads up to 50 MB. Local folders, cameras,
-  streams, the model, the device and the annotated video are shown greyed out, and hovering
-  their **?** says to clone the repository to use them
+  streams, the model, the device, plate images and the annotated video are shown greyed out,
+  and hovering their **?** says to clone the repository to use them
 - analyses the first 15 seconds of each video, on the CPU, one run at a time, reading plates on
   every second frame because OCR is the slowest stage on a CPU
 - shows the speed and time left while it works, since a small shared CPU analyses video more
