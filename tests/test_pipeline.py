@@ -261,3 +261,16 @@ def test_prepare_for_ocr_upscales_small_crops() -> None:
 def test_prepare_for_ocr_leaves_large_crops_alone() -> None:
     large = np.zeros((100, 300, 3), np.uint8)
     assert prepare_for_ocr(large, 64).shape == (100, 300)
+
+
+def test_prepare_for_ocr_accepts_a_grayscale_crop() -> None:
+    gray = np.zeros((20, 60), np.uint8)
+    assert prepare_for_ocr(gray, 64).shape == (64, 192)
+
+
+def test_ocr_engines_get_the_crop_in_colour_at_its_own_size(config: AppConfig, make_video) -> None:
+    # Each engine prepares the crop its own way, so the pipeline must not alter it.
+    ocr = StubOcr("HR26DK8337")
+    execute_run(config, str(make_video(4)), detector=ScriptedDetector([[box(10)]] * 4), ocr=ocr)
+    assert ocr.images[0].ndim == 3
+    assert ocr.images[0].shape[0] < config.ocr.min_crop_height

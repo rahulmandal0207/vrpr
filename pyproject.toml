@@ -21,6 +21,7 @@ ml = [
     # 8.3.41, .42, .45 and .46 were compromised releases; the floor excludes them.
     "ultralytics>=8.3.50,<9",
     "easyocr>=1.7.2,<2",
+    "fast-plate-ocr[onnx]>=1.1,<2",
 ]
 dataset = ["roboflow>=1.1"]
 web = ["streamlit>=1.40,<2"]
@@ -81,5 +82,12 @@ strict = true
 files = ["src"]
 
 [[tool.mypy.overrides]]
-module = ["ultralytics.*", "easyocr.*", "roboflow.*", "torch", "torch.*"]
+module = [
+    "ultralytics.*",
+    "easyocr.*",
+    "fast_plate_ocr.*",
+    "roboflow.*",
+    "torch",
+    "torch.*",
+]
 ignore_missing_imports = true

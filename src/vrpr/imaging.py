@@ -29,7 +29,7 @@ def crop_plate(frame: Frame, box: BoundingBox, padding: float = 0.0) -> Frame | 
 
 def prepare_for_ocr(crop: Frame, min_height: int) -> Frame:
     """Convert a crop to grayscale and enlarge it if it is too small to read."""
-    gray = cast(Frame, cv.cvtColor(crop, cv.COLOR_BGR2GRAY))
+    gray = crop if crop.ndim == 2 else cast(Frame, cv.cvtColor(crop, cv.COLOR_BGR2GRAY))
     height = gray.shape[0]
     if height >= min_height:
         return gray

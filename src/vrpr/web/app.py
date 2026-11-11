@@ -12,7 +12,7 @@ from vrpr.config import AppConfig, DetectorConfig, OcrConfig, load_config
 from vrpr.detector import YoloDetector
 from vrpr.exceptions import VrprError
 from vrpr.models import Frame
-from vrpr.ocr import EasyOcrEngine
+from vrpr.ocr import OcrEngine, build_ocr_engine
 from vrpr.pipeline import execute_run
 from vrpr.plate_details import describe_plate
 from vrpr.web import runs
@@ -42,8 +42,8 @@ def load_detector(
 
 
 @st.cache_resource(show_spinner="Loading the text reader...")
-def load_ocr(languages: tuple[str, ...], gpu: bool) -> EasyOcrEngine:
-    return EasyOcrEngine(OcrConfig(languages=languages, gpu=gpu))
+def load_ocr(settings: OcrConfig) -> OcrEngine:
+    return build_ocr_engine(settings)
 
 
 def settings_sidebar(base: AppConfig) -> AppConfig:
@@ -137,7 +137,7 @@ def run_pipeline(config: AppConfig, source: str) -> None:
             config.detector.device,
             weights.stat().st_mtime if weights.is_file() else 0.0,
         )
-        ocr = load_ocr(config.ocr.languages, config.ocr.gpu)
+        ocr = load_ocr(config.ocr)
         summary = execute_run(
             config,
             source,
