@@ -33,6 +33,9 @@ class DetectorConfig:
         _require(self.image_size > 0, "detector.image_size must be positive")
 
 
+OCR_ENGINES = ("hybrid", "plate", "easyocr")
+
+
 @dataclass(frozen=True)
 class OcrConfig:
     languages: tuple[str, ...] = ("en",)
@@ -41,9 +44,15 @@ class OcrConfig:
     every_n_frames: int = 1
     crop_padding: float = 0.05
     min_crop_height: int = 128
+    engine: str = "hybrid"
+    plate_model: str = "cct-xs-v2-global-model"
+    fallback_confidence: float = 0.7
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "languages", tuple(self.languages))
+        _require(self.engine in OCR_ENGINES, f"ocr.engine must be one of {OCR_ENGINES}")
+        _require(bool(self.plate_model), "ocr.plate_model must not be empty")
+        _require_fraction("ocr.fallback_confidence", self.fallback_confidence)
         _require(bool(self.languages), "ocr.languages must not be empty")
         _require_fraction("ocr.min_confidence", self.min_confidence)
         _require(self.every_n_frames >= 1, "ocr.every_n_frames must be at least 1")

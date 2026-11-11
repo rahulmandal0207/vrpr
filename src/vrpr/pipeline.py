@@ -17,9 +17,9 @@ from vrpr.config import AppConfig
 from vrpr.consensus import ConsensusEngine, FinalizedPlate
 from vrpr.detector import Detector, YoloDetector
 from vrpr.exceptions import OcrError
-from vrpr.imaging import crop_plate, prepare_for_ocr
+from vrpr.imaging import crop_plate
 from vrpr.models import Track
-from vrpr.ocr import EasyOcrEngine, OcrEngine
+from vrpr.ocr import OcrEngine, build_ocr_engine
 from vrpr.plate_details import describe_plate
 from vrpr.plates import mask_plate, read_plate
 from vrpr.rendering import AnnotatedVideoWriter, FrameObserver, WindowPreview, annotate
@@ -132,7 +132,7 @@ class Pipeline:
 
         self._ocr_calls += 1
         try:
-            fragments = self._ocr.read(prepare_for_ocr(crop, settings.min_crop_height))
+            fragments = self._ocr.read(crop)
         except OcrError as exc:
             self._ocr_errors += 1
             logger.warning("OCR failed on track %d: %s", track.track_id, exc)
@@ -211,7 +211,7 @@ def execute_run(
     """
     # Models load first: a missing file should fail before any output is created.
     detector = detector or YoloDetector(config.detector)
-    ocr = ocr or EasyOcrEngine(config.ocr)
+    ocr = ocr or build_ocr_engine(config.ocr)
 
     with VideoSource(source, config.source) as video:
         run_id = new_run_id()

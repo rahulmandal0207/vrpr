@@ -231,7 +231,7 @@ def app_test(monkeypatch):
     import vrpr.ocr
 
     monkeypatch.setattr(vrpr.detector, "YoloDetector", FakeYolo)
-    monkeypatch.setattr(vrpr.ocr, "EasyOcrEngine", FakeEasyOcr)
+    monkeypatch.setattr(vrpr.ocr, "build_ocr_engine", FakeEasyOcr)
     st.cache_resource.clear()
     return testing.AppTest.from_file(str(APP), default_timeout=60)
 

@@ -26,6 +26,14 @@ differ from before: see the README.
   plates, from a bundled table of about 1,300 RTO codes. They are added to `plates.csv`,
   `plates.jsonl`, the web page's plate cards and `vrpr parse`, and need no network access.
 
+- A plate reading model, `fast-plate-ocr`, read before EasyOCR. It reads small, blurred and
+  low-resolution plates far better: on two test clips, vehicles reported with exactly the
+  right plate rose from 4 to 9 of 10 at 1080p, from 2 to 8 at 720p, from 1 to 5 at 480p and
+  from 0 to 3 at 360p. EasyOCR still reads the crops the model is unsure about, such as
+  two-line plates. `ocr.engine`, `ocr.plate_model` and `ocr.fallback_confidence` control it.
+  Existing installs need `pip install -e ".[ml]"` again, and the first run downloads the
+  model (about 3 MB).
+
 ### Performance
 
 - On the CPU, PyTorch's threads are limited to the cores a container may use. Ultralytics set

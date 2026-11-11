@@ -14,14 +14,17 @@ It started as a Python Programming course project at GD Goenka University.
 flowchart LR
     A[Video source] --> B[YOLOv8 detector]
     B --> C[IoU tracker]
-    C --> D[Crop and prepare]
-    D --> E[EasyOCR]
+    C --> D[Crop]
+    D --> E[Plate reader]
     E --> F[Plate parser]
     F --> G[Consensus vote]
     G --> H[CSV, JSONL, crops]
 ```
 
 - **Tracking** gives each plate a stable identity across frames.
+- **The plate reader** is a small model trained only on number plates, which copes with small
+  and blurred plates. Crops it is unsure about go to EasyOCR, which is better at two-line
+  plates. `ocr.engine` chooses between them.
 - **The parser** handles standard, Bharat series and two-line plates, and repairs common OCR
   confusions such as `O` for `0`, but only where the plate layout requires a digit or a letter.
 - **Consensus** takes the plate that several frames agree on, so one bad frame cannot produce a

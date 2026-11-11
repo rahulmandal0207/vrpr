@@ -17,7 +17,7 @@
 | `detector` | Wraps YOLO behind the `Detector` protocol |
 | `tracking` | Gives detections a stable identity |
 | `imaging` | Crops plates and prepares them for OCR |
-| `ocr` | Wraps EasyOCR behind the `OcrEngine` protocol |
+| `ocr` | Wraps the plate reading model and EasyOCR behind the `OcrEngine` protocol |
 | `plates` | Turns OCR text into a validated plate number |
 | `consensus` | Combines readings of one vehicle into one result |
 | `sinks` | Writes CSV, JSON Lines and crops |
@@ -55,8 +55,36 @@ correctly in about 1 frame in 10, yet that was still its most common reading, wh
 every frame until a plate settles (`ocr.every_n_frames: 1`) and upscales crops to 128 pixels high.
 Contrast enhancement, beam-search decoding, extra crop padding and skipping EasyOCR's text detector
 all made results worse or no better. Voting cannot fix a misread that EasyOCR makes most of the
-time: on the clip above, it read `AP28CC4284` as `AP28CC6284` twice as often as correctly. That
-needs an OCR model trained on Indian plates.
+time: on the clip above, it read `AP28CC4284` as `AP28CC6284` twice as often as correctly.
+
+### A reader trained on plates, with a general reader behind it
+
+That limit is why plates are read first by a model trained only on number plates
+(`fast-plate-ocr`, run with ONNX Runtime). The detector was never the weak stage: it finds about
+as many plates at 360p as at 1080p. Reading was. At 1080p a plate is about 43 pixels high, at
+480p about 20, and at 360p about 15. On labelled crops from one clip the plate model read 68% of
+single frames correctly at 1080p, 53% at 720p, 37% at 480p and 5% at 360p, against 15%, 14%, 3%
+and under 1% for EasyOCR, in about 2 ms a crop on a CPU.
+
+The plate model reads the crop as one line, so it fails on two-line plates and on boxes much
+larger than the plate. `ocr.engine: hybrid` keeps its answer when it is a valid plate number
+read with at least `ocr.fallback_confidence`, and otherwise sends the crop to EasyOCR, which
+finds the text lines itself. Vehicles reported with exactly the right plate, of 10 across two
+clips, each downscaled from 1080p:
+
+| Video height | EasyOCR alone | Plate model alone | Hybrid |
+| --- | --- | --- | --- |
+| 1080 | 4 | 8 | 9 |
+| 720 | 2 | 8 | 8 |
+| 480 | 1 | 5 | 5 |
+| 360 | 0 | 3 | 3 |
+| 240 | 0 | 1 | 1 |
+
+Wrong rows fell as well, from 6 to 1 at 1080p and from 7 to 2 at 720p. Ten vehicles is a small
+sample, so read the table as a direction, not a rate. Below about 15 pixels of plate height most
+frames are unreadable by any model tried, including RapidOCR. Sharpening, contrast
+equalisation, averaging a track's crops across frames and voting per character instead of per
+plate were all tried on the plate model and did not help reliably.
 
 ### Identity comes from the tracker, sightings from the plate
 
