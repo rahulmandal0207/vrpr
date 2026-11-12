@@ -16,7 +16,7 @@
 | `video` | Reads frames, and reconnects cameras and streams |
 | `detector` | Wraps YOLO behind the `Detector` protocol |
 | `tracking` | Gives detections a stable identity |
-| `imaging` | Crops plates and prepares them for OCR |
+| `imaging` | Crops plates, and prepares them for each reader with the `preprocess` filters |
 | `ocr` | Wraps the plate reading model and EasyOCR behind the `OcrEngine` protocol |
 | `plates` | Turns OCR text into a validated plate number |
 | `consensus` | Combines readings of one vehicle into one result |

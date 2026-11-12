@@ -8,14 +8,15 @@ from pathlib import Path
 
 import streamlit as st
 
+from vrpr import tuning
 from vrpr.config import AppConfig, DetectorConfig, OcrConfig, load_config
 from vrpr.detector import YoloDetector
 from vrpr.exceptions import VrprError
-from vrpr.models import Frame
-from vrpr.ocr import OcrEngine, build_ocr_engine
+from vrpr.models import Frame, OcrFragment
+from vrpr.ocr import EasyOcrEngine, OcrEngine, PlateOcrEngine, combine_readers
 from vrpr.pipeline import execute_run
 from vrpr.plate_details import describe_plate
-from vrpr.web import runs
+from vrpr.web import advanced, runs
 
 CONFIG_PATH = Path("configs/default.yaml")
 VIDEO_DIR = Path("data/videos")
@@ -29,21 +30,45 @@ PREVIEW_WIDTH = 960
 PREVIEW_INTERVAL_SECONDS = 0.1
 
 
-@st.cache_resource(show_spinner="Loading the plate detector...")
-def load_detector(
-    weights: str, confidence: float, image_size: int, device: str | None, modified: float
-) -> YoloDetector:
-    # ``modified`` is part of the cache key, so retrained weights are picked up.
-    return YoloDetector(
-        DetectorConfig(
-            weights=Path(weights), confidence=confidence, image_size=image_size, device=device
-        )
+@st.cache_resource(show_spinner="Loading the plate detector...", max_entries=4)
+def load_detector(weights: str, device: str | None, modified: float) -> YoloDetector:
+    # ``modified`` is part of the cache key, so retrained weights are picked up. Prediction
+    # settings are not: changing them reuses the loaded model.
+    return YoloDetector(DetectorConfig(weights=Path(weights), device=device))
+
+
+@st.cache_resource(show_spinner="Loading the text reader...", max_entries=2)
+def load_easyocr(languages: tuple[str, ...], gpu: bool) -> EasyOcrEngine:
+    return EasyOcrEngine(OcrConfig(languages=languages, gpu=gpu))
+
+
+@st.cache_resource(show_spinner="Loading the plate reader...", max_entries=2)
+def load_plate_reader(plate_model: str) -> PlateOcrEngine:
+    return PlateOcrEngine(OcrConfig(plate_model=plate_model))
+
+
+def load_ocr(config: AppConfig) -> OcrEngine:
+    """The reader chosen in the settings, made from the shared models it needs."""
+    settings, filters = config.ocr, config.preprocess
+    return combine_readers(
+        settings,
+        lambda: load_plate_reader(settings.plate_model).with_settings(settings, filters),
+        lambda: load_easyocr(settings.languages, settings.gpu).with_settings(settings, filters),
     )
 
 
-@st.cache_resource(show_spinner="Loading the text reader...")
-def load_ocr(settings: OcrConfig) -> OcrEngine:
-    return build_ocr_engine(settings)
+def load_models(config: AppConfig) -> tuple[YoloDetector, OcrEngine]:
+    """The shared models, set up with this page's current settings."""
+    weights = config.detector.weights
+    modified = weights.stat().st_mtime if weights.is_file() else 0.0
+    detector = load_detector(str(weights), config.detector.device, modified)
+    return detector.with_settings(config.detector), load_ocr(config)
+
+
+@st.cache_data(max_entries=8, show_spinner=False)
+def cached_frame(source: str, index: int, modified: float) -> Frame | None:
+    # ``modified`` is part of the cache key, so a replaced file is read again.
+    return tuning.read_frame(source, index)
 
 
 def settings_sidebar(base: AppConfig) -> AppConfig:
@@ -128,16 +153,8 @@ def run_pipeline(config: AppConfig, source: str) -> None:
         value = frames / total if total and frames <= total else (0.99 if total else 0.0)
         progress.progress(value, text=text)
 
-    weights = config.detector.weights
     try:
-        detector = load_detector(
-            str(weights),
-            config.detector.confidence,
-            config.detector.image_size,
-            config.detector.device,
-            weights.stat().st_mtime if weights.is_file() else 0.0,
-        )
-        ocr = load_ocr(config.ocr)
+        detector, ocr = load_models(config)
         summary = execute_run(
             config,
             source,
@@ -151,6 +168,105 @@ def run_pipeline(config: AppConfig, source: str) -> None:
         return
     progress.progress(1.0, text=f"Done: {summary.frames} frames")
     st.session_state[LAST_RUN] = str(config.output.directory / summary.run_id)
+
+
+@st.fragment
+def tuning_view(config: AppConfig, source: str | None) -> None:
+    """Show how the current settings detect and read the plates on one frame of a video."""
+    if source is None:
+        st.info("Choose a video above first.")
+        return
+    total = runs.frame_count(source)
+    if not total:
+        st.info("This works on video files. Choose a video in data/videos, or upload one.")
+        return
+    index = st.slider(
+        "Frame",
+        0,
+        total - 1,
+        0,
+        key=f"tune_frame-{source}",
+        help="Pick a frame where a plate is clear and close, then change the advanced options "
+        "in the side panel and watch the reading.",
+    )
+    frame = cached_frame(source, index, Path(source).stat().st_mtime)
+    if frame is None:
+        st.warning("Could not read that frame. Try another one.")
+        return
+    try:
+        detector, ocr = load_models(config)
+        with st.spinner("Reading the plates..."):
+            trials = tuning.try_frame(frame, detector, ocr, config)
+    except VrprError as exc:
+        st.error(str(exc))
+        return
+
+    st.image(
+        runs.preview_jpeg(tuning.draw_trials(frame, trials), PREVIEW_WIDTH),
+        output_format="JPEG",
+        width="stretch",
+        alt=f"Frame {index} with {len(trials)} detected plates boxed and numbered",
+    )
+    if not trials:
+        st.info(
+            "No plates found on this frame. Try another frame, or lower the detection "
+            "confidence in the side panel."
+        )
+        return
+    st.caption(
+        "This reads one frame only. A full run reads each plate on many frames and votes, so "
+        "it is more reliable than any single reading here."
+    )
+    for trial in trials:
+        show_trial(trial)
+
+
+def fragments_text(fragments: list[OcrFragment]) -> str:
+    return " · ".join(f"`{fragment.text}` {fragment.confidence:.2f}" for fragment in fragments)
+
+
+def show_trial(trial: tuning.PlateTrial) -> None:
+    with st.container(border=True):
+        crop_column, prepared_column, result_column = st.columns([1, 1, 1.2])
+        crop_column.image(
+            trial.crop,
+            channels="BGR",
+            caption=f"{trial.number}. Detected with confidence {trial.detection.confidence:.2f}",
+            width="stretch",
+            alt=f"Plate {trial.number} as detected",
+        )
+        prepared_column.image(
+            trial.prepared,
+            # Filtered plates are usually gray; colour ones are still in OpenCV's order.
+            channels="BGR" if trial.prepared.ndim == 3 else "RGB",
+            caption=f"What {trial.reader or 'the text reader'} saw, after the image filters",
+            width="stretch",
+            alt=f"Plate {trial.number} after the image filters",
+        )
+        with result_column:
+            if trial.error:
+                st.error(trial.error)
+            elif trial.reading is not None:
+                st.markdown(f"#### {trial.reading.plate}")
+                st.caption(
+                    f"{trial.reading.plate_format} plate · "
+                    f"confidence {trial.reading.confidence:.2f}"
+                )
+            else:
+                st.markdown("#### No plate number")
+                st.caption("The text read does not make a valid Indian plate number.")
+            reader = trial.reader or "The reader"
+            if trial.fragments:
+                st.caption(f"{reader} read: {fragments_text(trial.fragments)}")
+            elif not trial.error:
+                st.caption(f"{reader} found no text.")
+            if trial.set_aside is not None:
+                earlier = trial.set_aside
+                attempt = fragments_text(earlier.fragments) if earlier.fragments else "nothing"
+                st.caption(
+                    f"{earlier.reader} read {attempt} first. That was not a valid plate "
+                    f"number read with enough confidence, so {reader} read it instead."
+                )
 
 
 def crop_file(results: runs.RunResults, crop_path: str) -> Path | None:
@@ -235,12 +351,19 @@ def main() -> None:
     st.title("Vehicle registration plate recognition")
 
     config = settings_sidebar(load_config(CONFIG_PATH if CONFIG_PATH.is_file() else None))
+    config = advanced.advanced_options(config)
     run_tab, history_tab = st.tabs(["Run", "Past runs"])
 
     with run_tab:
         source = choose_source()
         if st.button("Run", type="primary", disabled=source is None, key="run") and source:
             run_pipeline(config, source)
+        tune = st.expander(
+            "Try settings on one frame", icon=":material/tune:", on_change="rerun", key="tune"
+        )
+        if tune.open:
+            with tune:
+                tuning_view(config, source)
         last_run = st.session_state.get(LAST_RUN)
         if last_run and Path(last_run).is_dir():
             st.subheader("Results")

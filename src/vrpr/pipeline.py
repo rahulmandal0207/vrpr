@@ -211,7 +211,7 @@ def execute_run(
     """
     # Models load first: a missing file should fail before any output is created.
     detector = detector or YoloDetector(config.detector)
-    ocr = ocr or build_ocr_engine(config.ocr)
+    ocr = ocr or build_ocr_engine(config.ocr, config.preprocess)
 
     with VideoSource(source, config.source) as video:
         run_id = new_run_id()

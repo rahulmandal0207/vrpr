@@ -137,6 +137,40 @@ Run it from the project folder. It opens `http://localhost:8501`, and only this 
 it. Settings in the side panel start from `configs/default.yaml`. Uploads are saved to
 `data/uploads/`, which git ignores.
 
+### Advanced options
+
+The side panel's **Advanced options** change how each plate is cleaned up, found and read:
+
+- **Image filters** (OpenCV): grayscale, enlarging small plates, the margin around the plate,
+  noise reduction, brightness, contrast (CLAHE or equalize), sharpening, black and white
+  (Otsu or adaptive threshold) and inverting light text on dark plates.
+- **Plate detector** (YOLO): image size, the overlap limit for merging boxes, and test-time
+  augmentation.
+- **Text reader**: which reader to use (the plate model, EasyOCR, or both), the confidence below
+  which the plate model hands a plate to EasyOCR, and the confidence below which text is ignored.
+  For EasyOCR: the decoder (greedy or beam search), its text-finding thresholds, magnification,
+  the smallest text size, the low-contrast retry, and reading the text rotated.
+
+The image filters apply to both readers. With no filter on, each reader gets the crop the way
+its model works best: gray and enlarged for EasyOCR, in colour at its own size for the plate
+model.
+
+To see what a change does before running a whole video, open **Try settings on one frame** on the
+Run tab. Pick a frame where a plate is clear and close: the page shows each detected plate as found,
+the image after the filters, which is what the reader saw, and which reader read it. When the
+plate model's answer was set aside for EasyOCR's, both are shown. A single frame is less
+reliable than a full run, which reads each plate on many frames and votes.
+
+**Reset** returns the options to `configs/default.yaml`, whose values reproduce VRPR's normal
+results. **Save settings** downloads them as YAML for the command line:
+
+```bash
+vrpr run traffic.mp4 --config vrpr-settings.yaml
+```
+
+The same settings can be set in a config file: see the `detector`, `ocr` and `preprocess` sections
+of `configs/default.yaml`.
+
 ## Public demo
 
 A public demo runs at [vrprdemo.streamlit.app](https://vrprdemo.streamlit.app/), on Streamlit

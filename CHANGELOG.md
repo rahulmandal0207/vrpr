@@ -22,6 +22,11 @@ differ from before: see the README.
 - A public demo for Streamlit Community Cloud, kept on the `demo` branch.
 - The trained model, `models/best.pt`, so a fresh clone runs without training.
 - Speed and time left in the web page's progress bar.
+- Advanced options on the web page for OpenCV image filters, YOLO detection and EasyOCR
+  reading, with a view that tries them on one frame and shows each plate before and after
+  the filters, and which reader read it. They are also config settings: `detector.iou`,
+  `detector.augment`, EasyOCR's readtext settings under `ocr`, and a new `preprocess` section
+  whose filters both readers apply. The defaults leave results unchanged.
 - Plate details: the state, RTO office and area of each plate, and the year of Bharat series
   plates, from a bundled table of about 1,300 RTO codes. They are added to `plates.csv`,
   `plates.jsonl`, the web page's plate cards and `vrpr parse`, and need no network access.

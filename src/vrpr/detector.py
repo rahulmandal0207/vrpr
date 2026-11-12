@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -37,11 +38,26 @@ class YoloDetector:
         self._model = load_yolo(config.weights)
         self._threads_checked = False
 
+    @property
+    def config(self) -> DetectorConfig:
+        return self._config
+
+    def with_settings(self, config: DetectorConfig) -> YoloDetector:
+        """Return a detector that shares this one's loaded model but predicts with ``config``.
+
+        The weights and device are the model's own, so only prediction settings change.
+        """
+        other = copy.copy(self)
+        other._config = config
+        return other
+
     def detect(self, frame: Frame) -> list[Detection]:
         results = self._model.predict(
             source=frame,
             conf=self._config.confidence,
             imgsz=self._config.image_size,
+            iou=self._config.iou,
+            augment=self._config.augment,
             device=self._config.device,
             verbose=False,
         )

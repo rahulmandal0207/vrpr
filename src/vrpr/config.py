@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, fields
+from dataclasses import asdict, dataclass, field, fields, replace
 from pathlib import Path
 from typing import Any
 
@@ -20,17 +20,31 @@ def _require_fraction(name: str, value: float) -> None:
     _require(0.0 <= value <= 1.0, f"{name} must be between 0 and 1, got {value}")
 
 
+def _require_choice(name: str, value: str, choices: tuple[str, ...]) -> None:
+    _require(value in choices, f"{name} must be one of {', '.join(choices)}, got {value!r}")
+
+
+DENOISE_METHODS = ("none", "bilateral", "median")
+CONTRAST_METHODS = ("none", "clahe", "equalize")
+THRESHOLD_METHODS = ("none", "otsu", "adaptive")
+OCR_DECODERS = ("greedy", "beamsearch")
+OCR_ROTATIONS = (90, 180, 270)
+
+
 @dataclass(frozen=True)
 class DetectorConfig:
     weights: Path = Path("models/best.pt")
     confidence: float = 0.4
     image_size: int = 640
     device: str | None = None
+    iou: float = 0.7  # overlap above which YOLO keeps only the stronger of two boxes
+    augment: bool = False  # test-time augmentation: flipped and scaled copies, slower
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "weights", Path(self.weights))
         _require_fraction("detector.confidence", self.confidence)
         _require(self.image_size > 0, "detector.image_size must be positive")
+        _require_fraction("detector.iou", self.iou)
 
 
 OCR_ENGINES = ("hybrid", "plate", "easyocr")
@@ -47,9 +61,32 @@ class OcrConfig:
     engine: str = "hybrid"
     plate_model: str = "cct-xs-v2-global-model"
     fallback_confidence: float = 0.7
+    # Passed to EasyOCR's readtext. The defaults are EasyOCR's own.
+    decoder: str = "greedy"
+    beam_width: int = 5
+    text_threshold: float = 0.7
+    low_text: float = 0.4
+    link_threshold: float = 0.4
+    contrast_ths: float = 0.1
+    adjust_contrast: float = 0.5
+    mag_ratio: float = 1.0
+    min_size: int = 20
+    rotation_info: tuple[int, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "languages", tuple(self.languages))
+        object.__setattr__(self, "rotation_info", tuple(self.rotation_info))
+        _require_choice("ocr.decoder", self.decoder, OCR_DECODERS)
+        _require(self.beam_width >= 1, "ocr.beam_width must be at least 1")
+        for name in ("text_threshold", "low_text", "link_threshold", "contrast_ths"):
+            _require_fraction(f"ocr.{name}", getattr(self, name))
+        _require_fraction("ocr.adjust_contrast", self.adjust_contrast)
+        _require(self.mag_ratio > 0, "ocr.mag_ratio must be positive")
+        _require(self.min_size >= 1, "ocr.min_size must be at least 1")
+        _require(
+            all(angle in OCR_ROTATIONS for angle in self.rotation_info),
+            f"ocr.rotation_info may only contain {OCR_ROTATIONS}",
+        )
         _require(self.engine in OCR_ENGINES, f"ocr.engine must be one of {OCR_ENGINES}")
         _require(bool(self.plate_model), "ocr.plate_model must not be empty")
         _require_fraction("ocr.fallback_confidence", self.fallback_confidence)
@@ -58,6 +95,43 @@ class OcrConfig:
         _require(self.every_n_frames >= 1, "ocr.every_n_frames must be at least 1")
         _require(self.crop_padding >= 0, "ocr.crop_padding must not be negative")
         _require(self.min_crop_height >= 1, "ocr.min_crop_height must be at least 1")
+
+
+@dataclass(frozen=True)
+class PreprocessConfig:
+    """OpenCV filters applied to each plate crop, in this order, before it is read.
+
+    Each reader applies them while preparing the crop, and the defaults leave its preparation as
+    it is. ``grayscale`` is for EasyOCR only: the plate model was trained on colour images.
+    Thresholding needs a single channel, so it implies grayscale for both readers.
+    """
+
+    grayscale: bool = True
+    denoise: str = "none"
+    gamma: float = 1.0  # above 1 brightens dark plates, below 1 darkens washed-out ones
+    contrast: str = "none"
+    clahe_clip_limit: float = 2.0
+    sharpen: float = 0.0  # unsharp mask strength; 0 is off
+    threshold: str = "none"
+    adaptive_block_size: int = 31
+    invert: bool = False  # for light text on a dark plate
+
+    def __post_init__(self) -> None:
+        _require_choice("preprocess.denoise", self.denoise, DENOISE_METHODS)
+        _require_choice("preprocess.contrast", self.contrast, CONTRAST_METHODS)
+        _require_choice("preprocess.threshold", self.threshold, THRESHOLD_METHODS)
+        _require(0.1 <= self.gamma <= 5.0, "preprocess.gamma must be between 0.1 and 5")
+        _require(self.clahe_clip_limit > 0, "preprocess.clahe_clip_limit must be positive")
+        _require(0.0 <= self.sharpen <= 5.0, "preprocess.sharpen must be between 0 and 5")
+        _require(
+            self.adaptive_block_size >= 3 and self.adaptive_block_size % 2 == 1,
+            "preprocess.adaptive_block_size must be an odd number of at least 3",
+        )
+
+    @property
+    def changes_image(self) -> bool:
+        """Whether any filter is on. Grayscale is a reader's own preparation, not a filter."""
+        return replace(self, grayscale=True) != PreprocessConfig()
 
 
 @dataclass(frozen=True)
@@ -130,6 +204,7 @@ class LoggingConfig:
 class AppConfig:
     detector: DetectorConfig = field(default_factory=DetectorConfig)
     ocr: OcrConfig = field(default_factory=OcrConfig)
+    preprocess: PreprocessConfig = field(default_factory=PreprocessConfig)
     tracker: TrackerConfig = field(default_factory=TrackerConfig)
     consensus: ConsensusConfig = field(default_factory=ConsensusConfig)
     output: OutputConfig = field(default_factory=OutputConfig)
@@ -140,6 +215,7 @@ class AppConfig:
 _SECTIONS: dict[str, Any] = {
     "detector": DetectorConfig,
     "ocr": OcrConfig,
+    "preprocess": PreprocessConfig,
     "tracker": TrackerConfig,
     "consensus": ConsensusConfig,
     "output": OutputConfig,
@@ -181,3 +257,23 @@ def load_config(path: Path | None = None) -> AppConfig:
         return AppConfig()
     _require(isinstance(data, dict), f"{path} must contain a mapping")
     return build_config(data)
+
+
+def _plain(value: Any) -> Any:
+    if isinstance(value, Path):
+        return value.as_posix()
+    if isinstance(value, tuple | list):
+        return [_plain(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _plain(item) for key, item in value.items()}
+    return value
+
+
+def config_to_dict(config: AppConfig) -> dict[str, Any]:
+    """Return the configuration as plain values, the shape ``build_config`` reads back."""
+    return {name: _plain(asdict(getattr(config, name))) for name in _SECTIONS}
+
+
+def dump_config(config: AppConfig) -> str:
+    """Return the configuration as YAML, for use with ``vrpr run --config``."""
+    return yaml.safe_dump(config_to_dict(config), sort_keys=False)
