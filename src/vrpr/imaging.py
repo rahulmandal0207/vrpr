@@ -35,24 +35,40 @@ def crop_plate(frame: Frame, box: BoundingBox, padding: float = 0.0) -> Frame | 
 def prepare_for_ocr(
     crop: Frame, min_height: int, filters: PreprocessConfig = _DEFAULT_FILTERS
 ) -> Frame:
-    """Convert a crop to grayscale, enlarge it if it is too small to read, then filter it.
+    """Prepare a crop for a general text reader: grayscale, enlarged if small, then filtered.
 
     With the default filters this only converts and enlarges.
     """
     gray = filters.grayscale or filters.threshold != "none"
     image = cast(Frame, cv.cvtColor(crop, cv.COLOR_BGR2GRAY)) if gray and crop.ndim == 3 else crop
+    return apply_filters(enlarge(image, min_height), filters)
+
+
+def prepare_in_colour(
+    crop: Frame, min_height: int, filters: PreprocessConfig = _DEFAULT_FILTERS
+) -> Frame:
+    """Prepare a crop for a reader trained on colour plates at their own size.
+
+    With no filters on, the crop is returned as it is. With filters on, it is enlarged first,
+    as in ``prepare_for_ocr``, so each filter acts at the same scale for every reader.
+    """
+    if not filters.changes_image:
+        return crop
+    return apply_filters(enlarge(crop, min_height), filters)
+
+
+def enlarge(image: Frame, min_height: int) -> Frame:
+    """Scale an image up to ``min_height`` if it is shorter."""
     height = image.shape[0]
-    if height < min_height:
-        scale = min_height / height
-        image = cast(
-            Frame, cv.resize(image, None, fx=scale, fy=scale, interpolation=cv.INTER_CUBIC)
-        )
-    return apply_filters(image, filters)
+    if height >= min_height:
+        return image
+    scale = min_height / height
+    return cast(Frame, cv.resize(image, None, fx=scale, fy=scale, interpolation=cv.INTER_CUBIC))
 
 
 def apply_filters(image: Frame, filters: PreprocessConfig) -> Frame:
     """Apply the OpenCV filters in a fixed order: denoise, gamma, contrast, sharpen, threshold."""
-    if filters.is_default:
+    if not filters.changes_image:
         return image
     if filters.denoise == "bilateral":
         # Smooths flat areas but keeps character edges sharp.
@@ -72,6 +88,9 @@ def apply_filters(image: Frame, filters: PreprocessConfig) -> Frame:
         image = cast(
             Frame, cv.addWeighted(image, 1 + filters.sharpen, blurred, -filters.sharpen, 0)
         )
+    if filters.threshold != "none" and image.ndim == 3:
+        # Thresholding needs a single channel.
+        image = cast(Frame, cv.cvtColor(image, cv.COLOR_BGR2GRAY))
     if filters.threshold == "otsu":
         _, binary = cv.threshold(image, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU)
         image = cast(Frame, binary)

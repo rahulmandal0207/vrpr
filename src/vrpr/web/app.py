@@ -12,8 +12,8 @@ from vrpr import tuning
 from vrpr.config import AppConfig, DetectorConfig, OcrConfig, load_config
 from vrpr.detector import YoloDetector
 from vrpr.exceptions import VrprError
-from vrpr.models import Frame
-from vrpr.ocr import EasyOcrEngine
+from vrpr.models import Frame, OcrFragment
+from vrpr.ocr import EasyOcrEngine, OcrEngine, PlateOcrEngine, combine_readers
 from vrpr.pipeline import execute_run
 from vrpr.plate_details import describe_plate
 from vrpr.web import advanced, runs
@@ -37,18 +37,32 @@ def load_detector(weights: str, device: str | None, modified: float) -> YoloDete
     return YoloDetector(DetectorConfig(weights=Path(weights), device=device))
 
 
-@st.cache_resource(show_spinner="Loading the text reader...", max_entries=4)
-def load_ocr(languages: tuple[str, ...], gpu: bool) -> EasyOcrEngine:
+@st.cache_resource(show_spinner="Loading the text reader...", max_entries=2)
+def load_easyocr(languages: tuple[str, ...], gpu: bool) -> EasyOcrEngine:
     return EasyOcrEngine(OcrConfig(languages=languages, gpu=gpu))
 
 
-def load_models(config: AppConfig) -> tuple[YoloDetector, EasyOcrEngine]:
+@st.cache_resource(show_spinner="Loading the plate reader...", max_entries=2)
+def load_plate_reader(plate_model: str) -> PlateOcrEngine:
+    return PlateOcrEngine(OcrConfig(plate_model=plate_model))
+
+
+def load_ocr(config: AppConfig) -> OcrEngine:
+    """The reader chosen in the settings, made from the shared models it needs."""
+    settings, filters = config.ocr, config.preprocess
+    return combine_readers(
+        settings,
+        lambda: load_plate_reader(settings.plate_model).with_settings(settings, filters),
+        lambda: load_easyocr(settings.languages, settings.gpu).with_settings(settings, filters),
+    )
+
+
+def load_models(config: AppConfig) -> tuple[YoloDetector, OcrEngine]:
     """The shared models, set up with this page's current settings."""
     weights = config.detector.weights
     modified = weights.stat().st_mtime if weights.is_file() else 0.0
     detector = load_detector(str(weights), config.detector.device, modified)
-    ocr = load_ocr(config.ocr.languages, config.ocr.gpu)
-    return detector.with_settings(config.detector), ocr.with_settings(config.ocr)
+    return detector.with_settings(config.detector), load_ocr(config)
 
 
 @st.cache_data(max_entries=8, show_spinner=False)
@@ -207,6 +221,10 @@ def tuning_view(config: AppConfig, source: str | None) -> None:
         show_trial(trial)
 
 
+def fragments_text(fragments: list[OcrFragment]) -> str:
+    return " · ".join(f"`{fragment.text}` {fragment.confidence:.2f}" for fragment in fragments)
+
+
 def show_trial(trial: tuning.PlateTrial) -> None:
     with st.container(border=True):
         crop_column, prepared_column, result_column = st.columns([1, 1, 1.2])
@@ -221,7 +239,7 @@ def show_trial(trial: tuning.PlateTrial) -> None:
             trial.prepared,
             # Filtered plates are usually gray; colour ones are still in OpenCV's order.
             channels="BGR" if trial.prepared.ndim == 3 else "RGB",
-            caption="What the text reader sees, after the image filters",
+            caption=f"What {trial.reader or 'the text reader'} saw, after the image filters",
             width="stretch",
             alt=f"Plate {trial.number} after the image filters",
         )
@@ -237,16 +255,18 @@ def show_trial(trial: tuning.PlateTrial) -> None:
             else:
                 st.markdown("#### No plate number")
                 st.caption("The text read does not make a valid Indian plate number.")
+            reader = trial.reader or "The reader"
             if trial.fragments:
-                st.caption(
-                    "EasyOCR read: "
-                    + " · ".join(
-                        f"`{fragment.text}` {fragment.confidence:.2f}"
-                        for fragment in trial.fragments
-                    )
-                )
+                st.caption(f"{reader} read: {fragments_text(trial.fragments)}")
             elif not trial.error:
-                st.caption("EasyOCR found no text.")
+                st.caption(f"{reader} found no text.")
+            if trial.set_aside is not None:
+                earlier = trial.set_aside
+                attempt = fragments_text(earlier.fragments) if earlier.fragments else "nothing"
+                st.caption(
+                    f"{earlier.reader} read {attempt} first. That was not a valid plate "
+                    f"number read with enough confidence, so {reader} read it instead."
+                )
 
 
 def crop_file(results: runs.RunResults, crop_path: str) -> Path | None:

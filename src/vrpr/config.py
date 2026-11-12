@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field, fields
+from dataclasses import asdict, dataclass, field, fields, replace
 from pathlib import Path
 from typing import Any
 
@@ -47,6 +47,9 @@ class DetectorConfig:
         _require_fraction("detector.iou", self.iou)
 
 
+OCR_ENGINES = ("hybrid", "plate", "easyocr")
+
+
 @dataclass(frozen=True)
 class OcrConfig:
     languages: tuple[str, ...] = ("en",)
@@ -55,6 +58,9 @@ class OcrConfig:
     every_n_frames: int = 1
     crop_padding: float = 0.05
     min_crop_height: int = 128
+    engine: str = "hybrid"
+    plate_model: str = "cct-xs-v2-global-model"
+    fallback_confidence: float = 0.7
     # Passed to EasyOCR's readtext. The defaults are EasyOCR's own.
     decoder: str = "greedy"
     beam_width: int = 5
@@ -81,6 +87,9 @@ class OcrConfig:
             all(angle in OCR_ROTATIONS for angle in self.rotation_info),
             f"ocr.rotation_info may only contain {OCR_ROTATIONS}",
         )
+        _require(self.engine in OCR_ENGINES, f"ocr.engine must be one of {OCR_ENGINES}")
+        _require(bool(self.plate_model), "ocr.plate_model must not be empty")
+        _require_fraction("ocr.fallback_confidence", self.fallback_confidence)
         _require(bool(self.languages), "ocr.languages must not be empty")
         _require_fraction("ocr.min_confidence", self.min_confidence)
         _require(self.every_n_frames >= 1, "ocr.every_n_frames must be at least 1")
@@ -90,10 +99,11 @@ class OcrConfig:
 
 @dataclass(frozen=True)
 class PreprocessConfig:
-    """OpenCV filters applied to each plate crop, in this order, before OCR.
+    """OpenCV filters applied to each plate crop, in this order, before it is read.
 
-    The defaults leave the crop as it is, apart from the grayscale conversion and upscaling in
-    ``ocr``. Thresholding needs a single channel, so it implies grayscale.
+    Each reader applies them while preparing the crop, and the defaults leave its preparation as
+    it is. ``grayscale`` is for EasyOCR only: the plate model was trained on colour images.
+    Thresholding needs a single channel, so it implies grayscale for both readers.
     """
 
     grayscale: bool = True
@@ -119,8 +129,9 @@ class PreprocessConfig:
         )
 
     @property
-    def is_default(self) -> bool:
-        return self == PreprocessConfig()
+    def changes_image(self) -> bool:
+        """Whether any filter is on. Grayscale is a reader's own preparation, not a filter."""
+        return replace(self, grayscale=True) != PreprocessConfig()
 
 
 @dataclass(frozen=True)

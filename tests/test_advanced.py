@@ -19,8 +19,9 @@ from vrpr.config import (
     load_config,
 )
 from vrpr.exceptions import ConfigError, OcrError
-from vrpr.imaging import apply_filters, prepare_for_ocr
-from vrpr.models import BoundingBox, Detection
+from vrpr.imaging import apply_filters, prepare_for_ocr, prepare_in_colour
+from vrpr.models import BoundingBox, Detection, OcrFragment
+from vrpr.ocr import HybridOcrEngine, TracedReading
 
 REPOSITORY = Path(__file__).resolve().parent.parent
 
@@ -34,6 +35,22 @@ def plate_image() -> np.ndarray:
 
 
 # Filters
+
+
+def test_colour_preparation_leaves_the_crop_alone_without_filters() -> None:
+    crop = plate_image()
+    assert prepare_in_colour(crop, 128) is crop
+    assert prepare_in_colour(crop, 128, PreprocessConfig(grayscale=False)) is crop
+    filtered = prepare_in_colour(crop, 128, PreprocessConfig(gamma=2.0))
+    assert filtered.shape[0] == 128 and filtered.ndim == 3
+    binary = prepare_in_colour(crop, 128, PreprocessConfig(threshold="adaptive"))
+    assert binary.ndim == 2 and set(np.unique(binary)) <= {0, 255}
+
+
+def test_grayscale_alone_is_not_a_filter() -> None:
+    assert not PreprocessConfig().changes_image
+    assert not PreprocessConfig(grayscale=False).changes_image
+    assert PreprocessConfig(sharpen=0.5).changes_image
 
 
 def test_default_preparation_is_unchanged() -> None:
@@ -132,7 +149,7 @@ def test_the_shipped_defaults_match_the_code() -> None:
     shipped = load_config(REPOSITORY / "configs" / "default.yaml")
     assert shipped.preprocess == PreprocessConfig()
     assert (shipped.detector.iou, shipped.detector.augment) == (0.7, False)
-    assert shipped.ocr.decoder == "greedy"
+    assert shipped.ocr == OcrConfig()
 
 
 # Trying settings on one frame
@@ -154,16 +171,40 @@ def test_try_frame_reads_each_plate_strongest_first() -> None:
     assert [trial.detection.confidence for trial in trials] == [0.9, 0.5]
     assert trials[0].reading is not None and trials[0].reading.plate == "HR26DK8337"
     assert trials[1].reading is None and trials[1].fragments == []
-    # The reader is given the filtered image, and the trial keeps both versions.
-    assert trials[0].prepared.shape[0] == 128 and trials[0].crop.ndim == 3
-    assert np.array_equal(ocr.images[0], trials[0].prepared)
+    # Readers prepare the crop themselves, so they are given it in colour as it was cut.
+    assert trials[0].crop.ndim == 3 and np.array_equal(ocr.images[0], trials[0].crop)
 
 
-def test_try_frame_applies_the_filters() -> None:
+class TracingReader:
+    """A reader that prepares the crop like EasyOCR and says what it saw."""
+
+    def __init__(self, filters: PreprocessConfig) -> None:
+        self.filters = filters
+
+    def read(self, image):
+        return self.read_traced(image).fragments
+
+    def read_traced(self, image) -> TracedReading:
+        prepared = prepare_for_ocr(image, 128, self.filters)
+        fragment = OcrFragment("HR26DK8337", 0.9, BoundingBox(0, 0, 100, 30))
+        return TracedReading("EasyOCR", prepared, [fragment])
+
+
+def test_try_frame_shows_what_the_reader_saw() -> None:
     frame = np.full((120, 160, 3), 200, np.uint8)
-    config = AppConfig(preprocess=PreprocessConfig(invert=True))
-    trial = tuning.try_frame(frame, TwoPlates(), StubOcr(""), config)[0]
-    assert trial.prepared.max() == 55  # 255 - 200
+    reader = TracingReader(PreprocessConfig(invert=True))
+    trial = tuning.try_frame(frame, TwoPlates(), reader, AppConfig())[0]
+    assert trial.reader == "EasyOCR"
+    assert trial.prepared.shape[0] == 128 and trial.prepared.max() == 55  # 255 - 200
+    assert trial.crop.max() == 200
+
+
+def test_try_frame_keeps_the_reading_a_hybrid_reader_set_aside() -> None:
+    frame = np.full((120, 160, 3), 200, np.uint8)
+    hybrid = HybridOcrEngine(StubOcr("HR26"), TracingReader(PreprocessConfig()), 0.7)
+    trial = tuning.try_frame(frame, TwoPlates(), hybrid, AppConfig())[0]
+    assert trial.reading is not None and trial.reading.plate == "HR26DK8337"
+    assert trial.set_aside is not None and trial.set_aside.fragments[0].text == "HR26"
 
 
 def test_try_frame_reports_ocr_failures_per_plate() -> None:

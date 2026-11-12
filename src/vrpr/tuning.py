@@ -15,9 +15,9 @@ import cv2 as cv
 from vrpr.config import AppConfig
 from vrpr.detector import Detector
 from vrpr.exceptions import OcrError
-from vrpr.imaging import crop_plate, prepare_for_ocr
+from vrpr.imaging import crop_plate
 from vrpr.models import Detection, Frame, OcrFragment, PlateReading
-from vrpr.ocr import OcrEngine
+from vrpr.ocr import OcrEngine, TracedReading, trace_reading
 from vrpr.plates import read_plate
 
 MAX_PLATES = 6
@@ -27,7 +27,11 @@ _LABEL_COLOUR = (255, 255, 255)
 
 @dataclass(frozen=True)
 class PlateTrial:
-    """What happened to one detected plate: the crop, the filtered image and the reading."""
+    """What happened to one detected plate: the crop, what the reader saw, and the reading.
+
+    ``reader`` names the reader that answered, and ``set_aside`` is an earlier reader's attempt
+    that was not kept.
+    """
 
     number: int
     detection: Detection
@@ -36,6 +40,8 @@ class PlateTrial:
     fragments: list[OcrFragment]
     reading: PlateReading | None
     error: str | None = None
+    reader: str = ""
+    set_aside: TracedReading | None = None
 
 
 def read_frame(source: str, index: int) -> Frame | None:
@@ -65,16 +71,25 @@ def try_frame(
         crop = crop_plate(frame, detection.box, config.ocr.crop_padding)
         if crop is None:
             continue
-        prepared = prepare_for_ocr(crop, config.ocr.min_crop_height, config.preprocess)
+        number = len(trials) + 1
         try:
-            fragments = ocr.read(prepared)
+            traced = trace_reading(ocr, crop)
         except OcrError as exc:
-            trials.append(
-                PlateTrial(len(trials) + 1, detection, crop, prepared, [], None, str(exc))
-            )
+            trials.append(PlateTrial(number, detection, crop, crop, [], None, str(exc)))
             continue
-        reading = read_plate(fragments, config.ocr.min_confidence)
-        trials.append(PlateTrial(len(trials) + 1, detection, crop, prepared, fragments, reading))
+        reading = read_plate(traced.fragments, config.ocr.min_confidence)
+        trials.append(
+            PlateTrial(
+                number,
+                detection,
+                crop,
+                traced.prepared,
+                traced.fragments,
+                reading,
+                reader=traced.reader,
+                set_aside=traced.set_aside,
+            )
+        )
     return trials
 
 

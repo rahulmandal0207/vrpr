@@ -20,6 +20,7 @@ from vrpr.config import (
     DetectorConfig,
     LoggingConfig,
     OcrConfig,
+    PreprocessConfig,
     SourceConfig,
     build_config,
     load_config,
@@ -35,8 +36,8 @@ from vrpr.exceptions import (
     SourceError,
 )
 from vrpr.logging_setup import JsonFormatter
-from vrpr.models import BoundingBox, PlateRecord
-from vrpr.ocr import EasyOcrEngine
+from vrpr.models import BoundingBox, OcrFragment, PlateRecord
+from vrpr.ocr import EasyOcrEngine, HybridOcrEngine, PlateOcrEngine, build_ocr_engine
 from vrpr.pipeline import RunSummary
 from vrpr.plates import edit_distance
 from vrpr.rendering import WindowPreview
@@ -81,6 +82,9 @@ def test_empty_config_gives_defaults(tmp_path: Path) -> None:
         {"detector": {"confidence": 2}},
         {"ocr": {"every_n_frames": 0}},
         {"ocr": {"languages": []}},
+        {"ocr": {"engine": "tesseract"}},
+        {"ocr": {"plate_model": ""}},
+        {"ocr": {"fallback_confidence": 1.5}},
         {"logging": {"level": "LOUD"}},
         {"logging": {"format": "xml"}},
     ],
@@ -410,6 +414,167 @@ def test_easyocr_failures_become_ocr_errors(monkeypatch) -> None:
     monkeypatch.setitem(sys.modules, "easyocr", types.SimpleNamespace(Reader=FailingReader))
     with pytest.raises(OcrError):
         EasyOcrEngine(OcrConfig()).read(np.zeros((4, 4), np.uint8))
+
+
+def test_easyocr_engine_prepares_the_crop_itself(monkeypatch) -> None:
+    seen = []
+
+    class FakeReader:
+        def __init__(self, languages: list, gpu: bool) -> None:
+            pass
+
+        def readtext(self, image, **options):
+            seen.append(image)
+            return []
+
+    monkeypatch.setitem(sys.modules, "easyocr", types.SimpleNamespace(Reader=FakeReader))
+    engine = EasyOcrEngine(OcrConfig(min_crop_height=64))
+    crop = np.full((16, 48, 3), 200, np.uint8)
+    assert engine.read(crop) == []
+    assert seen[0].shape == (64, 192)
+    # Filters are part of the preparation, and the traced reading shows what the reader saw.
+    inverted = engine.with_settings(OcrConfig(min_crop_height=64), PreprocessConfig(invert=True))
+    traced = inverted.read_traced(crop)
+    assert traced.reader == "EasyOCR"
+    assert traced.prepared.shape == (64, 192) and traced.prepared.max() == 55
+    assert np.array_equal(seen[1], traced.prepared)
+
+
+class FakeRecognizer:
+    """Stands in for fast-plate-ocr: records what it was given and returns a set reading."""
+
+    plate = "HR26DK8337"
+    char_probs = (0.9,) * 10
+    images: list = []  # noqa: RUF012
+
+    def __init__(self, model: str, device: str) -> None:
+        if model == "missing-model":
+            raise ValueError("unknown model")
+        type(self).images = []
+
+    def run(self, image, return_confidence: bool):
+        type(self).images.append(image.copy())
+        return [types.SimpleNamespace(plate=self.plate, char_probs=self.char_probs)]
+
+
+@pytest.fixture
+def fake_plate_library(monkeypatch):
+    module = types.SimpleNamespace(LicensePlateRecognizer=FakeRecognizer)
+    monkeypatch.setitem(sys.modules, "fast_plate_ocr", module)
+    monkeypatch.setattr(FakeRecognizer, "plate", "HR26DK8337")
+    monkeypatch.setattr(FakeRecognizer, "char_probs", (0.9,) * 10)
+    return FakeRecognizer
+
+
+def test_plate_engine_converts_results(fake_plate_library) -> None:
+    crop = np.zeros((20, 60, 3), np.uint8)
+    crop[..., 0] = 255  # blue, in OpenCV's order
+    fragments = PlateOcrEngine(OcrConfig()).read(crop)
+    assert fragments == [OcrFragment("HR26DK8337", pytest.approx(0.9), BoundingBox(0, 0, 60, 20))]
+    # The model wants RGB, so blue has moved to the last channel.
+    assert fake_plate_library.images[0][0, 0].tolist() == [0, 0, 255]
+
+
+def test_plate_engine_only_changes_the_crop_when_a_filter_is_on(fake_plate_library) -> None:
+    crop = np.full((20, 60, 3), 200, np.uint8)
+    engine = PlateOcrEngine(OcrConfig())
+    engine.read(crop)
+    # Turning grayscale off is not a filter: the plate model always gets colour.
+    engine.with_settings(OcrConfig(), PreprocessConfig(grayscale=False)).read(crop)
+    assert [image.shape for image in fake_plate_library.images] == [(20, 60, 3)] * 2
+
+    filtered = engine.with_settings(OcrConfig(min_crop_height=64), PreprocessConfig(invert=True))
+    traced = filtered.read_traced(crop)
+    assert traced.reader == "Plate model"
+    assert traced.prepared.shape == (64, 192, 3) and traced.prepared.max() == 55
+    assert fake_plate_library.images[-1].shape == (64, 192, 3)
+    # The fragment's box still describes the crop as it was cut.
+    assert traced.fragments[0].box == BoundingBox(0, 0, 60, 20)
+    # Black and white leaves one channel, which the model is given as gray RGB.
+    binary = engine.with_settings(OcrConfig(), PreprocessConfig(threshold="otsu")).read_traced(crop)
+    assert binary.prepared.ndim == 2 and fake_plate_library.images[-1].ndim == 3
+
+
+def test_plate_engine_drops_padding_and_empty_readings(fake_plate_library, monkeypatch) -> None:
+    engine = PlateOcrEngine(OcrConfig())
+    monkeypatch.setattr(fake_plate_library, "plate", "KA07N5205_")
+    assert engine.read(np.zeros((20, 60, 3), np.uint8))[0].text == "KA07N5205"
+    monkeypatch.setattr(fake_plate_library, "plate", "__________")
+    assert engine.read(np.zeros((20, 60), np.uint8)) == []
+
+
+def test_plate_engine_failures_become_ocr_errors(fake_plate_library, monkeypatch) -> None:
+    def broken(self, image, return_confidence: bool):
+        raise RuntimeError("bad image")
+
+    monkeypatch.setattr(fake_plate_library, "run", broken)
+    with pytest.raises(OcrError):
+        PlateOcrEngine(OcrConfig()).read(np.zeros((20, 60, 3), np.uint8))
+
+
+def test_plate_engine_reports_a_model_it_cannot_load(fake_plate_library) -> None:
+    with pytest.raises(ModelError, match="missing-model"):
+        PlateOcrEngine(OcrConfig(plate_model="missing-model"))
+
+
+def test_plate_engine_reports_a_missing_library(monkeypatch) -> None:
+    monkeypatch.setitem(sys.modules, "fast_plate_ocr", None)
+    with pytest.raises(DependencyError, match=r"\.\[ml\]"):
+        PlateOcrEngine(OcrConfig())
+
+
+class SetReader:
+    def __init__(self, text: str, confidence: float) -> None:
+        self.fragments = [OcrFragment(text, confidence, BoundingBox(0, 0, 60, 20))] if text else []
+        self.calls = 0
+
+    def read(self, image) -> list[OcrFragment]:
+        self.calls += 1
+        return self.fragments
+
+
+@pytest.mark.parametrize(
+    ("text", "confidence", "falls_back"),
+    [
+        ("HR26DK8337", 0.9, False),  # a confident, valid plate is kept
+        ("HR26DK8337", 0.5, True),  # valid but unsure
+        ("HR26DK", 0.9, True),  # confident but not a plate number
+        ("", 0.0, True),  # nothing read
+    ],
+)
+def test_hybrid_engine_falls_back_when_the_plate_reader_is_unsure(
+    text: str, confidence: float, falls_back: bool
+) -> None:
+    primary, fallback = SetReader(text, confidence), SetReader("DL8CAF5030", 0.6)
+    fragments = HybridOcrEngine(primary, fallback, 0.7).read(np.zeros((20, 60, 3), np.uint8))
+    assert fallback.calls == int(falls_back)
+    assert fragments == (fallback.fragments if falls_back else primary.fragments)
+
+
+def test_hybrid_engine_traces_the_reading_it_set_aside() -> None:
+    crop = np.zeros((20, 60, 3), np.uint8)
+    primary, fallback = SetReader("HR26DK", 0.9), SetReader("DL8CAF5030", 0.6)
+    traced = HybridOcrEngine(primary, fallback, 0.7).read_traced(crop)
+    assert traced.fragments == fallback.fragments
+    assert traced.set_aside is not None and traced.set_aside.fragments == primary.fragments
+
+    kept = HybridOcrEngine(SetReader("HR26DK8337", 0.9), fallback, 0.7).read_traced(crop)
+    assert kept.fragments[0].text == "HR26DK8337" and kept.set_aside is None
+
+
+def test_engine_is_chosen_by_the_settings(fake_plate_library, monkeypatch) -> None:
+    class FakeReader:
+        def __init__(self, languages: list, gpu: bool) -> None:
+            pass
+
+    monkeypatch.setitem(sys.modules, "easyocr", types.SimpleNamespace(Reader=FakeReader))
+    assert isinstance(build_ocr_engine(OcrConfig()), HybridOcrEngine)
+    assert isinstance(build_ocr_engine(OcrConfig(engine="plate")), PlateOcrEngine)
+    assert isinstance(build_ocr_engine(OcrConfig(engine="easyocr")), EasyOcrEngine)
+    # The filters reach whichever reader is built.
+    filters = PreprocessConfig(invert=True)
+    assert build_ocr_engine(OcrConfig(engine="plate"), filters)._filters == filters
+    assert build_ocr_engine(OcrConfig(engine="easyocr"), filters)._filters == filters
 
 
 # Training

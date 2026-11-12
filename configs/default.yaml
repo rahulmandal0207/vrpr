@@ -8,13 +8,20 @@ detector:
   augment: false       # test-time augmentation: also detect on flipped and rescaled copies, ~3x slower
 
 ocr:
-  languages: [en]
-  gpu: true            # falls back to CPU when no GPU is available
+  engine: hybrid       # "plate": a small model trained on number plates, best on small or
+                       # blurred plates; "easyocr": a general text reader, better on
+                       # two-line plates; "hybrid": the plate model first, and EasyOCR
+                       # when it is unsure
+  plate_model: cct-xs-v2-global-model  # a fast-plate-ocr model, downloaded on first use
+  fallback_confidence: 0.7  # hybrid: plate model readings below this go to EasyOCR
+  languages: [en]      # EasyOCR only
+  gpu: true            # EasyOCR only; falls back to CPU when no GPU is available
   min_confidence: 0.2  # ignore OCR fragments below this
   every_n_frames: 1    # read every frame until a plate is settled; OCR is the slowest stage,
                        # but a single frame is often misread, so more readings vote
   crop_padding: 0.05   # share of the box added on each side; more padding read worse
-  min_crop_height: 128 # smaller crops are upscaled before OCR; 128 read better than 64
+  min_crop_height: 128 # smaller crops are upscaled for EasyOCR, and for the plate model when a
+                       # preprocess filter is on; 128 read better than 64
   # EasyOCR readtext settings. These are EasyOCR's own defaults.
   decoder: greedy      # or beamsearch, which weighs several candidate readings; slower
   beam_width: 5        # candidates kept by beamsearch
@@ -27,8 +34,8 @@ ocr:
   min_size: 20         # text regions smaller than this, in pixels, are ignored
   rotation_info: []    # also read the text turned by these angles: any of 90, 180, 270
 
-preprocess:            # OpenCV filters for each plate crop, applied in this order before OCR
-  grayscale: true      # thresholding always works in gray
+preprocess:            # OpenCV filters for each plate crop, applied in this order by both readers
+  grayscale: true      # EasyOCR only: the plate model is given colour. Thresholding is always gray
   denoise: none        # none, bilateral (keeps edges) or median (removes speckles)
   gamma: 1.0           # above 1 brightens dark plates, below 1 darkens washed-out ones
   contrast: none       # none, clahe (evens out shadows and glare) or equalize

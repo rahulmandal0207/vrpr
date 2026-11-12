@@ -1,4 +1,4 @@
-"""The web page's advanced options: OpenCV filters, YOLO and EasyOCR settings.
+"""The web page's advanced options: OpenCV filters, YOLO and text reader settings.
 
 Each widget starts from the loaded configuration, so the defaults match ``vrpr run``. Widget
 keys start with ``adv_``, which lets the reset button clear them all at once.
@@ -15,9 +15,11 @@ from vrpr.config import (
     CONTRAST_METHODS,
     DENOISE_METHODS,
     OCR_DECODERS,
+    OCR_ENGINES,
     OCR_ROTATIONS,
     THRESHOLD_METHODS,
     AppConfig,
+    OcrConfig,
     dump_config,
 )
 
@@ -33,6 +35,9 @@ _LABELS = {
     "adaptive": "Adaptive",
     "greedy": "Greedy",
     "beamsearch": "Beam search",
+    "hybrid": "Both",
+    "plate": "Plate model",
+    "easyocr": "EasyOCR",
 }
 
 
@@ -78,7 +83,8 @@ def image_filters(base: AppConfig) -> AppConfig:
         "Convert to grayscale",
         filters.grayscale,
         key=PREFIX + "grayscale",
-        help="EasyOCR reads gray images well. Thresholding always works in gray.",
+        help="For EasyOCR, which reads gray images well. The plate model is given colour "
+        "unless Black and white is on.",
     )
     min_height = st.slider(
         "Enlarge plates smaller than (pixels tall)",
@@ -87,7 +93,8 @@ def image_filters(base: AppConfig) -> AppConfig:
         ocr.min_crop_height,
         16,
         key=PREFIX + "min_height",
-        help="Small crops are scaled up to this height before reading.",
+        help="Small crops are scaled up to this height for EasyOCR, and for the plate model "
+        "when a filter is on.",
     )
     padding = st.slider(
         "Margin around the plate",
@@ -219,6 +226,27 @@ def detector_settings(base: AppConfig) -> AppConfig:
 
 def reader_settings(base: AppConfig) -> AppConfig:
     ocr = base.ocr
+    engine = _choice(
+        "Reader",
+        OCR_ENGINES,
+        ocr.engine,
+        "engine",
+        "The plate model is trained on number plates and is best on small or blurred ones. "
+        "EasyOCR is a general text reader that copes better with two-line plates. Both uses "
+        "the plate model first, and EasyOCR when it is unsure.",
+    )
+    fallback_confidence = ocr.fallback_confidence
+    if engine == "hybrid":
+        fallback_confidence = st.slider(
+            "Use EasyOCR when the plate model is below",
+            0.0,
+            1.0,
+            float(ocr.fallback_confidence),
+            0.05,
+            key=PREFIX + "fallback_confidence",
+            help="A plate model reading is kept when it is a valid plate number with at least "
+            "this confidence. Otherwise EasyOCR reads the plate.",
+        )
     min_confidence = st.slider(
         "Ignore text below this confidence",
         0.0,
@@ -226,8 +254,19 @@ def reader_settings(base: AppConfig) -> AppConfig:
         float(ocr.min_confidence),
         0.05,
         key=PREFIX + "min_confidence",
-        help="Fragments EasyOCR is less sure of are dropped before the plate is assembled.",
+        help="Text the reader is less sure of is dropped before the plate is assembled.",
     )
+    chosen = replace(
+        ocr, engine=engine, fallback_confidence=fallback_confidence, min_confidence=min_confidence
+    )
+    if engine == "plate":
+        st.caption("EasyOCR's own settings are hidden, because the plate model reads alone.")
+        return replace(base, ocr=chosen)
+    st.caption("EasyOCR's own settings:")
+    return replace(base, ocr=easyocr_settings(chosen))
+
+
+def easyocr_settings(ocr: OcrConfig) -> OcrConfig:
     decoder = _choice(
         "Decoder",
         OCR_DECODERS,
@@ -321,21 +360,17 @@ def reader_settings(base: AppConfig) -> AppConfig:
         help="Reads the text turned by these angles too, and keeps the most confident.",
     )
     return replace(
-        base,
-        ocr=replace(
-            ocr,
-            min_confidence=min_confidence,
-            decoder=decoder,
-            beam_width=beam_width,
-            text_threshold=text_threshold,
-            low_text=low_text,
-            link_threshold=link_threshold,
-            mag_ratio=mag_ratio,
-            min_size=min_size,
-            contrast_ths=contrast_ths,
-            adjust_contrast=adjust_contrast,
-            rotation_info=tuple(sorted(rotations or ())),
-        ),
+        ocr,
+        decoder=decoder,
+        beam_width=beam_width,
+        text_threshold=text_threshold,
+        low_text=low_text,
+        link_threshold=link_threshold,
+        mag_ratio=mag_ratio,
+        min_size=min_size,
+        contrast_ths=contrast_ths,
+        adjust_contrast=adjust_contrast,
+        rotation_info=tuple(sorted(rotations or ())),
     )
 
 

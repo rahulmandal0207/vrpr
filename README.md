@@ -14,14 +14,17 @@ It started as a Python Programming course project at GD Goenka University.
 flowchart LR
     A[Video source] --> B[YOLOv8 detector]
     B --> C[IoU tracker]
-    C --> D[Crop and prepare]
-    D --> E[EasyOCR]
+    C --> D[Crop]
+    D --> E[Plate reader]
     E --> F[Plate parser]
     F --> G[Consensus vote]
     G --> H[CSV, JSONL, crops]
 ```
 
 - **Tracking** gives each plate a stable identity across frames.
+- **The plate reader** is a small model trained only on number plates, which copes with small
+  and blurred plates. Crops it is unsure about go to EasyOCR, which is better at two-line
+  plates. `ocr.engine` chooses between them.
 - **The parser** handles standard, Bharat series and two-line plates, and repairs common OCR
   confusions such as `O` for `0`, but only where the plate layout requires a digit or a letter.
 - **Consensus** takes the plate that several frames agree on, so one bad frame cannot produce a
@@ -143,13 +146,19 @@ The side panel's **Advanced options** change how each plate is cleaned up, found
   (Otsu or adaptive threshold) and inverting light text on dark plates.
 - **Plate detector** (YOLO): image size, the overlap limit for merging boxes, and test-time
   augmentation.
-- **Text reader** (EasyOCR): the confidence below which text is ignored, the decoder (greedy or
-  beam search), EasyOCR's text-finding thresholds, magnification, the smallest text size, the
-  low-contrast retry, and reading the text rotated.
+- **Text reader**: which reader to use (the plate model, EasyOCR, or both), the confidence below
+  which the plate model hands a plate to EasyOCR, and the confidence below which text is ignored.
+  For EasyOCR: the decoder (greedy or beam search), its text-finding thresholds, magnification,
+  the smallest text size, the low-contrast retry, and reading the text rotated.
+
+The image filters apply to both readers. With no filter on, each reader gets the crop the way
+its model works best: gray and enlarged for EasyOCR, in colour at its own size for the plate
+model.
 
 To see what a change does before running a whole video, open **Try settings on one frame** on the
 Run tab. Pick a frame where a plate is clear and close: the page shows each detected plate as found,
-the image after the filters, which is what EasyOCR sees, and what it read. A single frame is less
+the image after the filters, which is what the reader saw, and which reader read it. When the
+plate model's answer was set aside for EasyOCR's, both are shown. A single frame is less
 reliable than a full run, which reads each plate on many frames and votes.
 
 **Reset** returns the options to `configs/default.yaml`, whose values reproduce VRPR's normal

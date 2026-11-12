@@ -11,8 +11,11 @@ import numpy as np
 import pytest
 
 from vrpr import cli
+from vrpr.config import PreprocessConfig
 from vrpr.exceptions import ConfigError
+from vrpr.imaging import prepare_for_ocr
 from vrpr.models import BoundingBox, Detection, OcrFragment
+from vrpr.ocr import TracedReading
 from vrpr.web import runs
 
 APP = Path(runs.__file__).with_name("app.py")
@@ -218,19 +221,38 @@ class FakeYolo:
 
 
 class FakeEasyOcr:
+    """Stands in for a reader: prepares the crop like EasyOCR, then returns a set reading."""
+
+    name = "EasyOCR"
+    text = "HR26DK8337"
     used: ClassVar[list] = []
     images: ClassVar[list] = []
 
-    def __init__(self, config) -> None:
+    def __init__(self, config, filters=None) -> None:
         self.config = config
+        self.filters = filters or PreprocessConfig()
 
-    def with_settings(self, config) -> "FakeEasyOcr":
-        return FakeEasyOcr(config)
+    def with_settings(self, config, filters):
+        return type(self)(config, filters)
 
     def read(self, image) -> list[OcrFragment]:
-        FakeEasyOcr.used.append(self.config)
-        FakeEasyOcr.images.append(image)
-        return [OcrFragment("HR26DK8337", 0.95, BoundingBox(0, 0, 100, 30))]
+        return self.read_traced(image).fragments
+
+    def read_traced(self, image) -> TracedReading:
+        prepared = prepare_for_ocr(image, self.config.min_crop_height, self.filters)
+        type(self).used.append(self.config)
+        type(self).images.append(prepared)
+        fragments = [OcrFragment(self.text, 0.95, BoundingBox(0, 0, 100, 30))] if self.text else []
+        return TracedReading(self.name, prepared, fragments)
+
+
+class FakePlateReader(FakeEasyOcr):
+    """Reads nothing unless a test sets ``text``, so the default reader falls back to EasyOCR."""
+
+    name = "Plate model"
+    text = ""
+    used: ClassVar[list] = []
+    images: ClassVar[list] = []
 
 
 def plates_shown(app_test) -> list[str]:
@@ -248,9 +270,11 @@ def app_test(monkeypatch):
 
     monkeypatch.setattr(vrpr.detector, "YoloDetector", FakeYolo)
     monkeypatch.setattr(vrpr.ocr, "EasyOcrEngine", FakeEasyOcr)
+    monkeypatch.setattr(vrpr.ocr, "PlateOcrEngine", FakePlateReader)
     monkeypatch.setattr(FakeYolo, "used", [])
-    monkeypatch.setattr(FakeEasyOcr, "used", [])
-    monkeypatch.setattr(FakeEasyOcr, "images", [])
+    for fake in (FakeEasyOcr, FakePlateReader):
+        monkeypatch.setattr(fake, "used", [])
+        monkeypatch.setattr(fake, "images", [])
     st.cache_resource.clear()
     st.cache_data.clear()
     return testing.AppTest.from_file(str(APP), default_timeout=60)
@@ -363,6 +387,46 @@ def test_trying_settings_on_one_frame(app_test, make_video) -> None:
     app_test.toggle(key="adv_invert").set_value(True).run()
     assert np.array_equal(FakeEasyOcr.images[-1], 255 - plain)
     assert not Path("output").exists()  # trying settings saves nothing
+
+
+def test_the_reader_can_be_chosen(app_test, make_video, monkeypatch) -> None:
+    add_clip(make_video)
+    monkeypatch.setattr(FakePlateReader, "text", "DL8CAF5030")
+    app_test.session_state["tune"] = True
+    app_test.run()
+    # By default the plate model reads first, and its confident answer is kept.
+    assert plates_shown(app_test) == ["DL8CAF5030"]
+    assert not FakeEasyOcr.used
+    assert any("Plate model read" in caption.value for caption in app_test.caption)
+
+    app_test.segmented_control(key="adv_engine").set_value("easyocr").run()
+    assert plates_shown(app_test) == ["HR26DK8337"]
+    app_test.segmented_control(key="adv_engine").set_value("plate").run()
+    assert plates_shown(app_test) == ["DL8CAF5030"]
+    assert not any(slider.key == "adv_text_threshold" for slider in app_test.slider)
+
+
+def test_the_tuning_view_shows_a_reading_that_was_set_aside(app_test, make_video) -> None:
+    add_clip(make_video)
+    app_test.session_state["tune"] = True
+    app_test.run()
+    # The plate model read nothing, so EasyOCR read the plate.
+    assert plates_shown(app_test) == ["HR26DK8337"]
+    captions = [caption.value for caption in app_test.caption]
+    assert any("EasyOCR read: `HR26DK8337`" in caption for caption in captions)
+    assert any("Plate model read nothing first" in caption for caption in captions)
+
+
+def test_the_fallback_confidence_decides_which_reader_answers(
+    app_test, make_video, monkeypatch
+) -> None:
+    add_clip(make_video)
+    monkeypatch.setattr(FakePlateReader, "text", "DL8CAF5030")  # read with confidence 0.95
+    app_test.session_state["tune"] = True
+    app_test.run()
+    assert plates_shown(app_test) == ["DL8CAF5030"]
+    app_test.slider(key="adv_fallback_confidence").set_value(1.0).run()
+    assert plates_shown(app_test) == ["HR26DK8337"]
 
 
 def test_trying_settings_needs_a_video_file(app_test) -> None:

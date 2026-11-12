@@ -24,12 +24,20 @@ differ from before: see the README.
 - Speed and time left in the web page's progress bar.
 - Advanced options on the web page for OpenCV image filters, YOLO detection and EasyOCR
   reading, with a view that tries them on one frame and shows each plate before and after
-  the filters. They are also config settings: `detector.iou`, `detector.augment`, EasyOCR's
-  readtext settings under `ocr`, and a new `preprocess` section. The defaults leave results
-  unchanged.
+  the filters, and which reader read it. They are also config settings: `detector.iou`,
+  `detector.augment`, EasyOCR's readtext settings under `ocr`, and a new `preprocess` section
+  whose filters both readers apply. The defaults leave results unchanged.
 - Plate details: the state, RTO office and area of each plate, and the year of Bharat series
   plates, from a bundled table of about 1,300 RTO codes. They are added to `plates.csv`,
   `plates.jsonl`, the web page's plate cards and `vrpr parse`, and need no network access.
+
+- A plate reading model, `fast-plate-ocr`, read before EasyOCR. It reads small, blurred and
+  low-resolution plates far better: on two test clips, vehicles reported with exactly the
+  right plate rose from 4 to 9 of 10 at 1080p, from 2 to 8 at 720p, from 1 to 5 at 480p and
+  from 0 to 3 at 360p. EasyOCR still reads the crops the model is unsure about, such as
+  two-line plates. `ocr.engine`, `ocr.plate_model` and `ocr.fallback_confidence` control it.
+  Existing installs need `pip install -e ".[ml]"` again, and the first run downloads the
+  model (about 3 MB).
 
 ### Performance
 
